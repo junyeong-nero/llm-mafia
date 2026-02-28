@@ -1,110 +1,110 @@
 # AGENT.md
 
-이 문서는 이 저장소에서 작업하는 사람/AI 에이전트 공통 작업 규약입니다.
-아래 규칙은 "작게 변경하고 즉시 검증"하기 위한 최소 기준입니다.
+This document defines shared working rules for people and AI agents in this repository.
+These rules are the minimum standard for "small changes with immediate verification."
 
-## 1) 핵심 원칙 (필수)
+## 1) Core Principles (Required)
 
-- 작은 단위로 구현하고, 변경 직후 검증합니다.
-- 중복은 즉시 제거하고, 모호한 이름은 바로 개선합니다.
-- 기능 추가와 리팩토링을 분리하지 않고, 매 작업마다 가벼운 구조 개선을 수행합니다.
-- 추측으로 수정하지 않고, 파일/테스트/로그 근거를 확인한 뒤 변경합니다.
+- Implement in small units and verify immediately after each change.
+- Remove duplication as soon as it appears, and improve ambiguous names immediately.
+- Do not separate feature work and refactoring; perform lightweight structural improvement in every task.
+- Do not change code based on guesses. Confirm evidence from files/tests/logs first, then modify.
 
-## 2) 파일 길이 상한 (필수)
+## 2) File Length Limit (Required)
 
-- 모든 소스 코드 파일은 **1000줄 초과 금지**입니다.
-- 800줄을 넘기면 분리 후보로 간주하고 모듈 분해를 시작합니다.
-- 변경으로 1000줄을 넘게 되는 경우, 기능 추가 전에 파일 분리/리팩토링을 먼저 수행합니다.
+- All source code files must stay at **1000 lines or fewer**.
+- Treat files over 800 lines as split candidates and start module decomposition.
+- If a planned change would exceed 1000 lines, split/refactor the file before adding new functionality.
 
-적용 대상:
+Scope:
 
 - `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`
 
-예외(불가피한 경우만):
+Exceptions (only when unavoidable):
 
-- 자동 생성 파일
-- 외부 벤더 코드
-- 스냅샷/락 파일
+- Auto-generated files
+- External vendor code
+- Snapshot/lock files
 
-예외를 둘 경우 PR/커밋 설명에 아래 3가지를 남깁니다.
+When using an exception, include the following three items in the PR/commit description:
 
-- 예외 대상 파일
-- 예외가 필요한 이유
-- 후속 정리 계획(언제/어떻게 분리할지)
+- Target file under exception
+- Reason the exception is required
+- Follow-up cleanup plan (when/how it will be split)
 
-## 3) 지속적 리팩토링 규칙 (필수)
+## 3) Continuous Refactoring Rules (Required)
 
-모든 기능 개발/버그 수정 시 아래를 같이 점검합니다.
+Check the following together with every feature or bug fix:
 
-- 함수 길이와 책임: 한 함수가 여러 책임을 가지면 분리
-- 데이터 구조: 중복된 구조체/딕셔너리 형태 통합
-- 의존성 방향: 상위 정책이 하위 구현에 직접 묶이지 않도록 인터페이스 분리
-- 에러 처리: 공통 처리 패턴으로 정리
-- 로깅: 디버깅 가능한 최소 컨텍스트 유지
+- Function length and responsibility: split a function if it has multiple responsibilities
+- Data structures: unify duplicated struct/dictionary shapes
+- Dependency direction: separate interfaces so high-level policy is not directly coupled to low-level implementation
+- Error handling: consolidate into common handling patterns
+- Logging: keep the minimum context needed for debugging
 
-## 4) 구조 분해 가이드
+## 4) Decomposition Guide
 
-한 파일이 커질 때 다음 우선순위로 분해합니다.
+When a file grows large, decompose it in this priority order:
 
-1. 도메인 로직(규칙/판정)
-2. 인프라 로직(API 호출/저장)
-3. 프레젠테이션 로직(출력/CLI/UI)
-4. 유틸리티(파싱/포맷/검증)
+1. Domain logic (rules/judgment)
+2. Infrastructure logic (API calls/persistence)
+3. Presentation logic (output/CLI/UI)
+4. Utilities (parsing/formatting/validation)
 
-## 5) 검증 규칙 (필수)
+## 5) Verification Rules (Required)
 
-명령은 저장소 루트에서 실행합니다.
+Run commands at the repository root.
 
-### 5.1 공통
+### 5.1 Common
 
-- 기능 변경, 버그 수정, 리팩토링 후에는 최소 1회 테스트를 실행합니다.
-- 실패를 확인했으면 원인 수정 후 같은 검증 명령으로 재실행합니다.
+- After feature changes, bug fixes, or refactoring, run tests at least once.
+- If a failure occurs, fix the root cause and rerun the same verification command.
 
 ```bash
 uv run pytest -q
 ```
 
-### 5.2 빠른 무결성 확인
+### 5.2 Quick Integrity Check
 
-- 테스트 실행 전/후 수집 단계가 깨지지 않는지 확인이 필요하면 아래 명령을 사용합니다.
+- Use the command below when you need to verify collection integrity before/after test execution.
 
 ```bash
 uv run pytest --collect-only -q
 ```
 
-### 5.3 엔트리포인트 변경 시 추가 확인
+### 5.3 Extra Checks for Entrypoint Changes
 
-- `main.py` 또는 CLI 인자 처리 로직을 수정했다면:
+- If you modified `main.py` or CLI argument handling logic:
 
 ```bash
 uv run python main.py --help
 ```
 
-- `src/streamlit_app.py` 또는 대시보드 실행 경로를 수정했다면:
+- If you modified `src/streamlit_app.py` or dashboard run paths:
 
 ```bash
 uv run streamlit run src/streamlit_app.py --help
 ```
 
-## 6) 문서 동기화 규칙
+## 6) Documentation Sync Rules
 
-- 동작/설정/명령 변경 시 `README.en.md`, `README.ko.md`, 관련 `docs/`를 함께 점검합니다.
-- 문서와 구현이 다르면, 코드 또는 문서 중 하나를 같은 작업에서 반드시 맞춥니다.
-- 설정 검증 규칙(`player_count`, 역할/모델 count 합, `day_max_speeches_per_player > 0`)을 변경하면 문서의 검증 규칙도 동기화합니다.
+- When behavior/config/command changes, review `README.en.md`, `README.ko.md`, and related `docs/` together.
+- If docs and implementation diverge, reconcile code or docs within the same task.
+- If configuration validation rules (`player_count`, sum of role/model counts, `day_max_speeches_per_player > 0`) change, sync the validation rules in documentation as well.
 
-## 7) 작업 체크리스트
+## 7) Work Checklist
 
-작업 종료 전 반드시 확인:
+Before closing a task, confirm all of the following:
 
-- 파일 길이 1000줄 이하
-- 새로운 중복 코드 없음
-- 책임 분리가 명확함
-- 문서(`README.md`, `README.en.md`, `README.ko.md`, `docs/`)와 구현 불일치 없음
-- 변경 유형에 맞는 검증 명령 실행 및 결과 확인 완료
+- File length is 1000 lines or fewer
+- No new duplicate code
+- Responsibility boundaries are clear
+- No mismatch between docs (`README.md`, `README.en.md`, `README.ko.md`, `docs/`) and implementation
+- Verification commands for the change type were executed and results confirmed
 
-## 8) 권장 운영 방식
+## 8) Recommended Working Style
 
-- 기능 단위로 작은 PR/커밋 유지
-- 리뷰 시 "동작 여부"뿐 아니라 "구조 개선 여부"도 함께 확인
-- 기술 부채는 TODO로 미루기보다 영향 범위 내에서 즉시 상환
-- 규칙 예외는 구두 합의로 넘기지 말고 기록으로 남깁니다
+- Keep PRs/commits small and feature-scoped
+- During review, check both "does it work" and "did structure improve"
+- Repay technical debt within the current impact scope instead of deferring as TODO
+- Do not leave rule exceptions as verbal agreements; record them in writing

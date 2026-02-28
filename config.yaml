@@ -10,9 +10,12 @@ game:
 llm:
     provider: openrouter
     models:
-        - name: mafia-alpha
+        - name: trinity-large-preview
           model: arcee-ai/trinity-large-preview:free
           count: 2
-        - name: town-beta
+        - name: glm-4.5-air
           model: z-ai/glm-4.5-air:free
-          count: 6
+          count: 3
+        - name: solar-pro-3
+          model: upstage/solar-pro-3:free
+          count: 3
