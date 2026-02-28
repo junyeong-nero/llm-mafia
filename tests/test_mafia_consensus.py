@@ -110,3 +110,33 @@ def test_resolve_night_falls_back_when_no_consensus_target() -> None:
     assert killed == mafia_target
     assert doctor_target is None
     assert police_target is None
+
+
+def test_night_vote_tie_randomly_kills_one_of_tied_targets() -> None:
+    state = _build_state()
+    events = [
+        GameEvent(
+            turn=1,
+            phase=Phase.NIGHT,
+            speaker="Liam",
+            kind="mafia_vote",
+            content='{"target_id": 3, "target_name": "Emma"}',
+        ),
+        GameEvent(
+            turn=1,
+            phase=Phase.NIGHT,
+            speaker="Ethan",
+            kind="mafia_vote",
+            content='{"target_id": 4, "target_name": "Ava"}',
+        ),
+    ]
+
+    selected_target, reason = _resolve_mafia_consensus_target(state, events, seed=11)
+    killed, mafia_target, doctor_target, police_target = resolve_night(state, seed=11, mafia_target=selected_target)
+
+    assert selected_target in {3, 4}
+    assert reason.startswith("tie random")
+    assert mafia_target == selected_target
+    assert killed == selected_target
+    assert doctor_target is None
+    assert police_target is None

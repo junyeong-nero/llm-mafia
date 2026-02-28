@@ -930,17 +930,17 @@ def _resolve_mafia_consensus_target(
         return None, "no valid mafia_vote payload"
 
     tally = Counter(votes_by_speaker.values())
-    target_id, count = tally.most_common(1)[0]
-    majority_threshold = len(alive_mafia) // 2 + 1
-    top_count_tied = sum(1 for value in tally.values() if value == count) > 1
-    if count >= majority_threshold and not top_count_tied:
-        return target_id, f"majority {count}/{len(alive_mafia)}"
-
-    if top_count_tied:
-        tied_target_ids = sorted([candidate_id for candidate_id, votes in tally.items() if votes == count])
+    top_vote_count = max(tally.values())
+    top_target_ids = sorted([candidate_id for candidate_id, votes in tally.items() if votes == top_vote_count])
+    if len(top_target_ids) > 1:
         rng = random.Random(seed + state.turn)
-        selected_target_id = rng.choice(tied_target_ids)
-        return selected_target_id, f"tie random among {len(tied_target_ids)} targets"
+        selected_target_id = rng.choice(top_target_ids)
+        return selected_target_id, f"tie random among {len(top_target_ids)} targets"
+
+    majority_threshold = len(alive_mafia) // 2 + 1
+    top_target_id = top_target_ids[0]
+    if top_vote_count >= majority_threshold:
+        return top_target_id, f"majority {top_vote_count}/{len(alive_mafia)}"
 
     return None, "no majority consensus"
 
