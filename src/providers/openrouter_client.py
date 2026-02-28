@@ -59,6 +59,10 @@ class OpenRouterClient:
         if not model:
             raise OpenRouterError("model must not be empty")
 
+        model_candidates = [model]
+        if fallback_models:
+            model_candidates.extend(fallback_models)
+
         headers = {
             "Authorization": f"Bearer {self._settings.api_key}",
             "Content-Type": "application/json",
@@ -68,14 +72,38 @@ class OpenRouterClient:
         if self._settings.title:
             headers["X-OpenRouter-Title"] = self._settings.title
 
-        payload: dict[str, object] = {
+        payload_base: dict[str, object] = {
             "messages": messages,
-            "model": model,
             "stream": False,
         }
-        if fallback_models:
-            payload["models"] = [model, *fallback_models]
 
+        last_error: str | None = None
+        for model_index, current_model in enumerate(model_candidates):
+            payload = dict(payload_base)
+            payload["model"] = current_model
+            if model_index == 0 and len(model_candidates) > 1:
+                payload["models"] = model_candidates
+
+            result, last_error, should_try_next_model = self._attempt_completion_with_model(
+                headers=headers,
+                payload=payload,
+                model_name=current_model,
+            )
+            if result is not None:
+                return result
+            if should_try_next_model:
+                continue
+            break
+
+        raise OpenRouterError(last_error or "openrouter call failed")
+
+    def _attempt_completion_with_model(
+        self,
+        *,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        model_name: str,
+    ) -> tuple[dict[str, object] | None, str | None, bool]:
         last_error: str | None = None
         for attempt in range(self._settings.max_attempts):
             try:
@@ -100,7 +128,7 @@ class OpenRouterClient:
                     )
                     time.sleep(delay_seconds)
                     continue
-                raise OpenRouterError(f"network failure: {last_error}") from exc
+                return None, f"network failure: {last_error}", False
 
             if response.status_code in RETRYABLE_STATUSES:
                 last_error = f"http {response.status_code}"
@@ -122,12 +150,35 @@ class OpenRouterClient:
                     )
                     time.sleep(delay_seconds)
                     continue
-                raise OpenRouterError(f"retryable failure exhausted: {last_error}")
+                return None, f"retryable failure exhausted: {last_error}", False
 
             if response.status_code != 200:
-                raise OpenRouterError(f"http {response.status_code}: {response.text[:500]}")
+                error_message = f"http {response.status_code}: {response.text[:500]}"
+                should_try_next_model = response.status_code in {400, 404}
+                if should_try_next_model:
+                    prefixed_error = f"model={model_name} failed ({error_message})"
+                    return None, prefixed_error, True
+                return None, error_message, False
 
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError as exc:
+                last_error = f"invalid JSON response: {exc}"
+                if attempt < self._settings.max_attempts - 1:
+                    delay_seconds = _backoff_delay(attempt)
+                    self._emit_retry(
+                        {
+                            "attempt": attempt + 1,
+                            "max_attempts": self._settings.max_attempts,
+                            "reason": "invalid_json",
+                            "detail": last_error,
+                            "delay_seconds": delay_seconds,
+                        }
+                    )
+                    time.sleep(delay_seconds)
+                    continue
+                return None, last_error, False
+
             choices = data.get("choices")
             if not isinstance(choices, list) or not choices:
                 last_error = "missing choices in response"
@@ -144,7 +195,7 @@ class OpenRouterClient:
                     )
                     time.sleep(delay_seconds)
                     continue
-                raise OpenRouterError(last_error)
+                return None, last_error, False
 
             first_choice = choices[0]
             message = first_choice.get("message") if isinstance(first_choice, dict) else None
@@ -164,16 +215,16 @@ class OpenRouterClient:
                     )
                     time.sleep(delay_seconds)
                     continue
-                raise OpenRouterError(last_error)
+                return None, last_error, False
 
             return {
                 "text": content,
                 "model": data.get("model"),
                 "finish_reason": first_choice.get("finish_reason") if isinstance(first_choice, dict) else None,
                 "raw": data,
-            }
+            }, None, False
 
-        raise OpenRouterError(last_error or "openrouter call failed")
+        return None, last_error or "openrouter call failed", False
 
     def _emit_retry(self, event: dict[str, object]) -> None:
         if self._on_retry is None:
