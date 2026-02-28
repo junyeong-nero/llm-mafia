@@ -6,17 +6,17 @@ import random
 import re
 from typing import Callable
 
-from config import AppConfig
+from src.config import AppConfig
 
-from app.agents.llm_agent import LLMAgent
-from app.engine.game_state import GameEvent, GameState, Phase, Player, Role
-from app.engine.phase import next_phase
-from app.engine.rules import build_players, check_winner, resolve_night
-from app.engine.vote import resolve_vote
-from app.io.event_log import build_output_dir, state_to_dict, write_events_jsonl, write_summary_json
-from app.metrics.collector import collect_metrics
-from app.providers.openrouter_client import OpenRouterClient, OpenRouterError, load_openrouter_settings
-from app.runner.speech_queue import SpeechQueue
+from src.agents.llm_agent import LLMAgent
+from src.engine.game_state import GameEvent, GameState, Phase, Player, Role
+from src.engine.phase import next_phase
+from src.engine.rules import build_players, check_winner, resolve_night
+from src.engine.vote import resolve_vote
+from src.io.event_log import build_output_dir, state_to_dict, write_events_jsonl, write_summary_json
+from src.metrics.collector import collect_metrics
+from src.providers.openrouter_client import OpenRouterClient, OpenRouterError, load_openrouter_settings
+from src.runner.speech_queue import SpeechQueue
 
 
 @dataclass(frozen=True)
@@ -382,12 +382,10 @@ def _append_day_phase_talk(
             )
         )
 
-        request_prompt = (
-            f"{night_result}\n"
-            f"Your strategy: {strategy}\n"
-            "Decide whether to speak now. Reply in one line with this format only: "
-            "REQUEST: <short reason> or PASS: <short reason>. "
-            f"{naming_instruction}"
+        request_prompt = agent.build_speak_request_prompt(
+            night_result=night_result,
+            strategy=strategy,
+            naming_instruction=naming_instruction,
         )
         request_text = agent.speak(phase="day", turn=state.turn, prompt=request_prompt, history=history).strip()
         request_text = _normalize_player_references(request_text, state)
@@ -539,12 +537,11 @@ def _append_day_phase_talk(
                 continue
             candidate_agent = agents[candidate.id]
             candidate_history = _visible_history_for_player(events, candidate)
-            followup_prompt = (
-                f"{night_result}\n"
-                f"{player.name} just spoke: {speech}\n"
-                "Decide whether to request a follow-up statement to rebut that point or reinforce your own claim. "
-                "Reply in one line with this format only: REQUEST: <short reason> or PASS: <short reason>. "
-                f"{naming_instruction}"
+            followup_prompt = candidate_agent.build_followup_request_prompt(
+                night_result=night_result,
+                speaker_name=player.name,
+                speech=speech,
+                naming_instruction=naming_instruction,
             )
             followup_text = candidate_agent.speak(
                 phase="day",

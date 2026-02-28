@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.engine.game_state import GameEvent
+from src.engine.game_state import GameEvent
 
 
 class Agent(Protocol):

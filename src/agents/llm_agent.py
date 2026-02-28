@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
-from app.agents.personas import role_persona
-from app.engine.game_state import GameEvent, Role
-from app.providers.openrouter_client import OpenRouterClient, OpenRouterError
+from src.agents.prompt.personas import role_persona
+from src.engine.game_state import GameEvent, Role
+from src.providers.openrouter_client import OpenRouterClient, OpenRouterError
 
 
 @dataclass
@@ -14,6 +16,30 @@ class LLMAgent:
     role: Role
     client: OpenRouterClient | None = None
     fallback_models: list[str] = field(default_factory=list)
+
+    def build_speak_request_prompt(self, *, night_result: str, strategy: str, naming_instruction: str) -> str:
+        template = _load_prompt_template("speak_request.txt")
+        return template.format(
+            night_result=night_result,
+            strategy=strategy,
+            naming_instruction=naming_instruction,
+        )
+
+    def build_followup_request_prompt(
+        self,
+        *,
+        night_result: str,
+        speaker_name: str,
+        speech: str,
+        naming_instruction: str,
+    ) -> str:
+        template = _load_prompt_template("followup_request.txt")
+        return template.format(
+            night_result=night_result,
+            speaker_name=speaker_name,
+            speech=speech,
+            naming_instruction=naming_instruction,
+        )
 
     def speak(
         self,
@@ -74,3 +100,9 @@ def _history_to_context(history: list[GameEvent]) -> str:
             lines.append(f"- {signal}")
 
     return "\n".join(lines)
+
+
+@lru_cache(maxsize=None)
+def _load_prompt_template(filename: str) -> str:
+    prompt_path = Path(__file__).resolve().parent / "prompt" / filename
+    return prompt_path.read_text(encoding="utf-8").strip()

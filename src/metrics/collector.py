@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from app.engine.game_state import GameEvent, GameState, Role
+from src.engine.game_state import GameEvent, GameState, Role
 
 
 def collect_metrics(state: GameState, events: list[GameEvent]) -> dict[str, object]:

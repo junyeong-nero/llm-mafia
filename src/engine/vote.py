@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 
-from app.engine.game_state import GameState
+from src.engine.game_state import GameState
 
 
 def resolve_vote(state: GameState, *, seed: int) -> int | None:

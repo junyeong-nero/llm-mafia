@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.engine.game_state import Phase
+from src.engine.game_state import Phase
 
 
 def next_phase(phase: Phase) -> Phase:

@@ -1,0 +1,3 @@
+{night_result}
+{speaker_name} just spoke: {speech}
+Decide whether to request a follow-up statement to rebut that point or reinforce your own claim. Reply in one line with this format only: REQUEST: <short reason> or PASS: <short reason>. {naming_instruction}

@@ -7,7 +7,7 @@ from pathlib import Path
 import uuid
 from typing import Mapping
 
-from app.engine.game_state import GameEvent, GameState
+from src.engine.game_state import GameEvent, GameState
 
 
 def build_output_dir(base_dir: Path | None = None) -> Path:

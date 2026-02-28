@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 
-from app.engine.game_state import GameState, Phase, Player, Role
+from src.engine.game_state import GameState, Phase, Player, Role
 
 
 COMMON_AGENT_NAMES = [

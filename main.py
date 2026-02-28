@@ -5,9 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.metrics.report import to_report_text
-from app.runner.single_match import run_single_match
-from config import AppConfig, load_config
+from src.metrics.report import to_report_text
+from src.runner.single_match import run_single_match
+from src.config import AppConfig, load_config
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -38,8 +38,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--streamlit-app",
         type=Path,
-        default=Path("streamlit_app.py"),
-        help="Path to Streamlit app file (default: streamlit_app.py)",
+        default=Path("src/streamlit_app.py"),
+        help="Path to Streamlit app file (default: src/streamlit_app.py)",
     )
     return parser
 

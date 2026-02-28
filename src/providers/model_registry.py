@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from config import AppConfig
+from src.config import AppConfig
 
 
 def build_model_slots(config: AppConfig) -> list[tuple[str, str]]:

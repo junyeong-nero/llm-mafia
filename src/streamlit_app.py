@@ -7,8 +7,8 @@ from typing import Any
 
 import streamlit as st
 
-from app.runner.single_match import MatchResult, run_single_match
-from config import AppConfig, load_config
+from src.runner.single_match import MatchResult, run_single_match
+from src.config import AppConfig, load_config
 
 
 def _load_app_config() -> AppConfig:

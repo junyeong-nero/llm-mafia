@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from config import AppConfig
+from src.config import AppConfig
 
-from app.runner.single_match import MatchResult, run_single_match
+from src.runner.single_match import MatchResult, run_single_match
 
 
 @dataclass(frozen=True)

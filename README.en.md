@@ -3,12 +3,12 @@
 Language: English | [Korean](README.ko.md)
 
 This project is a simulator where LLM agents play a mafia game and record turn/phase-level events as logs.
-It supports both CLI execution (`main.py`) and a Streamlit dashboard (`streamlit_app.py`).
+It supports both CLI execution (`main.py`) and a Streamlit dashboard (`src/streamlit_app.py`).
 
 ## 1. Project Overview
 
 - Game loop: `setup -> night -> day -> vote -> night ...`
-- Core execution function: `run_single_match()` in `app/runner/single_match.py`
+- Core execution function: `run_single_match()` in `src/runner/single_match.py`
 - Main outputs:
   - Event log (`events.jsonl`)
   - Summary file (`summary.json`)
@@ -19,7 +19,7 @@ Win conditions are checked immediately after night ends and immediately after vo
 ## 2. Speech Request Logic (Core)
 
 The day (`day`) phase in this project is not a free-for-all speaking mode. It uses a **request-based queue (FIFO) speaking system**.
-The core implementation is `_append_day_phase_talk()` in `app/runner/single_match.py` and `app/runner/speech_queue.py`.
+The core implementation is `_append_day_phase_talk()` in `src/runner/single_match.py` and `src/runner/speech_queue.py`.
 
 ### 2.1 Initial Request Collection at Day Start
 
@@ -155,13 +155,13 @@ After execution, metrics and log paths are printed to stdout.
 ### 3.6 Run the Streamlit Dashboard
 
 ```bash
-uv run streamlit run streamlit_app.py
+uv run streamlit run src/streamlit_app.py
 ```
 
 Help:
 
 ```bash
-uv run streamlit run streamlit_app.py --help
+uv run streamlit run src/streamlit_app.py --help
 ```
 
 Items visible in the dashboard:
@@ -203,10 +203,10 @@ By reading `events.jsonl`, you can trace at turn granularity who requested speak
 ## 5. Code Map
 
 - Entry point: `main.py`
-- Dashboard: `streamlit_app.py`
-- Match runner: `app/runner/single_match.py`
-- Speech queue: `app/runner/speech_queue.py`
-- Phase transitions: `app/engine/phase.py`
-- Win/night rules: `app/engine/rules.py`
-- Vote resolution: `app/engine/vote.py`
-- Config loader/validation: `config.py`
+- Dashboard: `src/streamlit_app.py`
+- Match runner: `src/runner/single_match.py`
+- Speech queue: `src/runner/speech_queue.py`
+- Phase transitions: `src/engine/phase.py`
+- Win/night rules: `src/engine/rules.py`
+- Vote resolution: `src/engine/vote.py`
+- Config loader/validation: `src/config.py`
