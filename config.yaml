@@ -1,0 +1,18 @@
+game:
+    player_count: 8
+    day_max_speeches_per_player: 2
+    roles:
+        mafia: 2
+        police: 1
+        doctor: 1
+        citizen: 4
+
+llm:
+    provider: openrouter
+    models:
+        - name: mafia-alpha
+          model: arcee-ai/trinity-large-preview:free
+          count: 2
+        - name: town-beta
+          model: z-ai/glm-4.5-air:free
+          count: 6
