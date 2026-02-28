@@ -41,6 +41,13 @@ class LLMAgent:
             naming_instruction=naming_instruction,
         )
 
+    def build_day_vote_prompt(self, *, self_speech_context: str, naming_instruction: str) -> str:
+        template = _load_prompt_template("day_vote.txt")
+        return template.format(
+            self_speech_context=self_speech_context,
+            naming_instruction=naming_instruction,
+        )
+
     def speak(
         self,
         *,

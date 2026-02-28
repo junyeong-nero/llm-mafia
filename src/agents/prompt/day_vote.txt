@@ -1,0 +1,10 @@
+Use only your own prior public statements below to decide your day vote.
+Do not use any other players' statements or hidden information.
+
+Your own statements:
+{self_speech_context}
+
+Reply in exactly one line with this format only:
+VOTE: <exact alive player name>
+
+You cannot vote for yourself. {naming_instruction}

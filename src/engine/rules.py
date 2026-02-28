@@ -70,21 +70,27 @@ def check_winner(state: GameState) -> str | None:
     return None
 
 
-def resolve_night(state: GameState, *, seed: int) -> tuple[int | None, int | None, int | None]:
+def resolve_night(
+    state: GameState,
+    *,
+    seed: int,
+    mafia_target: int | None = None,
+) -> tuple[int | None, int | None, int | None, int | None]:
     rng = random.Random(seed + state.turn)
     alive = state.alive_players()
     alive_non_mafia = [p for p in alive if p.role != Role.MAFIA]
     if not alive_non_mafia:
-        return None, None, None
+        return None, None, None, None
 
-    mafia_target = rng.choice(alive_non_mafia).id
+    alive_non_mafia_ids = {player.id for player in alive_non_mafia}
+    selected_mafia_target = mafia_target if mafia_target in alive_non_mafia_ids else rng.choice(alive_non_mafia).id
     doctor_players = state.alive_by_role(Role.DOCTOR)
     doctor_target = rng.choice(alive).id if doctor_players else None
     police_players = state.alive_by_role(Role.POLICE)
     police_target = rng.choice(alive).id if police_players else None
 
-    killed = None if doctor_target == mafia_target else mafia_target
-    return killed, doctor_target, police_target
+    killed = None if doctor_target == selected_mafia_target else selected_mafia_target
+    return killed, selected_mafia_target, doctor_target, police_target
 
 
 def phase_label(phase: Phase) -> str:
