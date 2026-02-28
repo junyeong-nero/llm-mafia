@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import html
 import hashlib
+import json
+import re
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 
-from src.runner.single_match import MatchResult, run_single_match
 from src.config import AppConfig, load_config
+from src.engine.game_state import GameEvent
+from src.runner.single_match import MatchResult, run_single_match
 
 
 def _load_app_config() -> AppConfig:
@@ -39,6 +42,8 @@ def _initialize_state() -> None:
         st.session_state.speech_queue_total = 0
     if "speech_queue_turn" not in st.session_state:
         st.session_state.speech_queue_turn = None
+    if "live_vote_events" not in st.session_state:
+        st.session_state.live_vote_events = []
 
 
 def _set_current_view_state(result: MatchResult) -> None:
@@ -71,38 +76,46 @@ def _render_cycle_indicator() -> None:
     turn = st.session_state.turn
 
     if phase == "day":
-        text = f"{turn}번째 낮"
+        text = f"Day {turn}"
     elif phase == "night":
-        text = f"{turn}번째 밤"
+        text = f"Night {turn}"
     elif phase == "vote":
-        text = f"{turn}번째 낮 (투표)"
+        text = f"Day {turn} (Voting)"
     elif phase == "setup":
-        text = "게임 준비 중"
+        text = "Preparing game"
     else:
-        text = "게임 종료"
+        text = "Game over"
 
-    st.subheader("진행 상태")
-    st.metric("현재", text)
+    st.subheader("Game Progress")
+    st.metric("Current", text)
 
 
 def _render_feed(result: MatchResult | None) -> None:
-    st.subheader("LLM Chat Replay")
+    st.subheader("Live chat stream")
     if result is None and not st.session_state.live_chat_events:
         return
 
     if result is None:
-        _render_live_chat(st.container(height=620), st.session_state.live_chat_events, "Live replay")
+        _render_live_chat(st.container(), st.session_state.live_chat_events, "Live chat stream")
         return
 
-    with st.container(height=620):
+    with st.container():
         for event in result.events:
             if not _should_render_chat_event(str(event.kind), str(event.content)):
                 continue
-            role, avatar = _chat_role_and_avatar(event.speaker)
-            with st.chat_message(role, avatar=avatar):
-                st.markdown(f"**{event.speaker}**")
-                st.caption(f"Turn {event.turn} | {event.phase.value} | {event.kind}")
-                st.markdown(event.content)
+            vote_summary_rows = _vote_summary_rows_for_result_events(
+                result.events,
+                kind=str(event.kind),
+                turn=event.turn,
+            )
+            _render_chat_event(
+                kind=str(event.kind),
+                speaker=str(event.speaker),
+                message=str(event.content),
+                turn=event.turn,
+                phase=str(event.phase.value),
+                vote_summary_rows=vote_summary_rows,
+            )
 
 
 def _render_player_status(result: MatchResult | None) -> None:
@@ -116,16 +129,23 @@ def _render_player_status(result: MatchResult | None) -> None:
         st.caption("Run a match to see alive/dead status.")
         return
 
-    columns = st.columns(4)
-    for idx, player in enumerate(players):
+    table_rows: list[dict[str, str]] = []
+    for idx, player in enumerate(players, start=1):
         is_alive = bool(player.get("alive", True))
-        icon = "🔵" if is_alive else "🔴"
-        label = "Alive" if is_alive else "Dead"
-        name = str(player.get("name", f"Player{idx + 1}"))
+        status = "🟢 live" if is_alive else "🔴 dead"
+        name = str(player.get("name", f"Player{idx}"))
+        model_name = str(player.get("model_name", "unknown"))
         role = str(player.get("role", "unknown"))
-        with columns[idx % 4]:
-            st.markdown(f"**{name}**")
-            st.caption(f"{icon} {label} | role: {role}")
+        table_rows.append(
+            {
+                "name": name,
+                "model": model_name,
+                "role": role,
+                "status": status,
+            }
+        )
+
+    st.dataframe(table_rows, width="stretch", hide_index=True)
 
 
 def _render_speech_queue() -> None:
@@ -178,24 +198,276 @@ def _render_live_chat(
         if section_title:
             st.subheader(section_title)
         st.caption(title)
-        with st.container(height=480):
+        with st.container():
             for item in events[-30:]:
                 kind = str(item.get("kind", "progress"))
                 message = str(item.get("message", ""))
                 if not _should_render_chat_event(kind, message):
                     continue
-                speaker = item.get("speaker", "system")
-                role, avatar = _chat_role_and_avatar(speaker)
-                with st.chat_message(role, avatar=avatar):
-                    st.markdown(f"**{speaker}**")
-                    turn = item.get("turn", "?")
-                    phase = item.get("phase", "?")
-                    st.caption(f"Turn {turn} | {phase} | {kind}")
-                    st.markdown(message)
+                vote_summary_rows = _vote_summary_rows_for_live_events(
+                    st.session_state.live_vote_events,
+                    kind=kind,
+                    turn=item.get("turn", "?"),
+                )
+                _render_chat_event(
+                    kind=kind,
+                    speaker=str(item.get("speaker", "system")),
+                    message=message,
+                    turn=item.get("turn", "?"),
+                    phase=str(item.get("phase", "?")),
+                    vote_summary_rows=vote_summary_rows,
+                )
+
+
+def _render_chat_event(
+    *,
+    kind: str,
+    speaker: str,
+    message: str,
+    turn: object,
+    phase: str,
+    vote_summary_rows: list[dict[str, str]] | None = None,
+) -> None:
+    formatted_speaker, formatted_message = _format_chat_entry(
+        kind=kind,
+        speaker=speaker,
+        message=message,
+    )
+    role, avatar = _chat_role_and_avatar(formatted_speaker)
+    with st.chat_message(role, avatar=avatar):
+        st.markdown(f"**{formatted_speaker}**")
+        st.caption(f"Turn {turn} | {phase} | {kind}")
+        if vote_summary_rows:
+            st.table(vote_summary_rows)
+            normalized_kind = kind.strip().lower()
+            if normalized_kind in {"vote_result", "night_result"}:
+                vote_type = "day" if normalized_kind == "vote_result" else "night"
+                result_text = _normalize_vote_result_message(vote_type=vote_type, message=formatted_message)
+                if result_text:
+                    st.markdown(f"Result: {result_text}")
+            return
+        st.markdown(formatted_message)
+
+
+def _vote_summary_rows_for_live_events(
+    events: list[dict[str, str]],
+    *,
+    kind: str,
+    turn: object,
+) -> list[dict[str, str]] | None:
+    normalized_kind = kind.strip().lower()
+    turn_token = str(turn).strip()
+    if normalized_kind == "vote_result":
+        rows = _collect_vote_rows_from_live_events(
+            events,
+            vote_kind="day_vote",
+            vote_phase="vote",
+            vote_type="day",
+            turn_token=turn_token,
+        )
+        return _append_vote_result_row(rows)
+    if normalized_kind == "night_result":
+        rows = _collect_vote_rows_from_live_events(
+            events,
+            vote_kind="mafia_vote",
+            vote_phase="night",
+            vote_type="night",
+            turn_token=turn_token,
+        )
+        return _append_vote_result_row(rows)
+    return None
+
+
+def _collect_vote_rows_from_live_events(
+    events: list[dict[str, str]],
+    *,
+    vote_kind: str,
+    vote_phase: str,
+    vote_type: str,
+    turn_token: str,
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in events:
+        kind = str(item.get("kind", "")).strip().lower()
+        phase = str(item.get("phase", "")).strip().lower()
+        turn = str(item.get("turn", "")).strip()
+        if kind != vote_kind or phase != vote_phase or turn != turn_token:
+            continue
+
+        target_name = _extract_target_name_from_live_vote_event(item)
+        if target_name is None:
+            continue
+
+        voter_name = str(item.get("speaker", "")).strip() or "unknown"
+        rows.append(
+            {
+                "type": vote_type,
+                "voter": voter_name,
+                "target": target_name,
+            }
+        )
+    return rows
+
+
+def _vote_summary_rows_for_result_events(
+    events: list[GameEvent],
+    *,
+    kind: str,
+    turn: int,
+) -> list[dict[str, str]] | None:
+    normalized_kind = kind.strip().lower()
+    if normalized_kind == "vote_result":
+        rows = _collect_vote_rows_from_result_events(
+            events,
+            vote_kind="day_vote",
+            vote_phase="vote",
+            vote_type="day",
+            turn=turn,
+        )
+        return _append_vote_result_row(rows)
+    if normalized_kind == "night_result":
+        rows = _collect_vote_rows_from_result_events(
+            events,
+            vote_kind="mafia_vote",
+            vote_phase="night",
+            vote_type="night",
+            turn=turn,
+        )
+        return _append_vote_result_row(rows)
+    return None
+
+
+def _collect_vote_rows_from_result_events(
+    events: list[GameEvent],
+    *,
+    vote_kind: str,
+    vote_phase: str,
+    vote_type: str,
+    turn: int,
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for event in events:
+        event_kind = str(event.kind).strip().lower()
+        event_phase = str(event.phase.value).strip().lower()
+        if event_kind != vote_kind or event_phase != vote_phase or event.turn != turn:
+            continue
+
+        target_name = _extract_vote_target_name(str(event.content))
+        if target_name is None:
+            continue
+
+        voter_name = str(event.speaker).strip() or "unknown"
+        rows.append(
+            {
+                "type": vote_type,
+                "voter": voter_name,
+                "target": target_name,
+            }
+        )
+
+    return rows
+
+
+def _extract_target_name_from_live_vote_event(item: dict[str, str]) -> str | None:
+    raw_target_name = item.get("target_name")
+    if isinstance(raw_target_name, str) and raw_target_name.strip():
+        return raw_target_name.strip()
+
+    message = str(item.get("message", ""))
+    target_name = _extract_vote_target_name(message)
+    if target_name is not None:
+        return target_name
+
+    sentence_match = re.search(r"voted\s+to\s+eliminate\s+(.+?)(?:\.|$)", message, flags=re.IGNORECASE)
+    if sentence_match is None:
+        return None
+
+    candidate = sentence_match.group(1).strip()
+    if not candidate:
+        return None
+    return candidate
+
+
+def _append_vote_result_row(
+    rows: list[dict[str, str]],
+) -> list[dict[str, str]] | None:
+    if not rows:
+        return None
+    return rows
+
+
+def _normalize_vote_result_message(*, vote_type: str, message: str) -> str:
+    normalized = message.strip()
+    if vote_type == "night" and " mafia_target=" in normalized:
+        normalized = normalized.split(" mafia_target=", maxsplit=1)[0].strip()
+    return normalized
+
+
+def _format_chat_entry(*, kind: str, speaker: str, message: str) -> tuple[str, str]:
+    normalized_kind = kind.strip().lower()
+    if normalized_kind == "mafia_chat":
+        return speaker, _extract_mafia_chat_message(message)
+
+    if normalized_kind in {"day_vote", "mafia_vote"}:
+        vote_label = "Day vote" if normalized_kind == "day_vote" else "Night vote"
+        target_name = _extract_vote_target_name(message)
+        if target_name and speaker.strip():
+            return "system", f"{vote_label}: {speaker} -> {target_name}"
+        return "system", message
+
+    return speaker, message
+
+
+def _extract_vote_target_name(message: str) -> str | None:
+    try:
+        payload = json.loads(message)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    target_name = payload.get("target_name")
+    if isinstance(target_name, str) and target_name.strip():
+        return target_name.strip()
+    return None
+
+
+def _extract_mafia_chat_message(message: str) -> str:
+    chat_line: str | None = None
+    lines: list[str] = []
+    for raw_line in message.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.upper().startswith("CHAT:"):
+            candidate = line.split(":", maxsplit=1)[1].strip()
+            if candidate:
+                chat_line = candidate
+            continue
+        if line.upper().startswith("VOTE_JSON:"):
+            continue
+        lines.append(line)
+
+    if chat_line:
+        return chat_line
+    if lines:
+        return "\n".join(lines)
+    return message.strip()
 
 
 def _should_render_chat_event(kind: str, message: str) -> bool:
     normalized_kind = kind.strip().lower()
+    hidden_kinds = {
+        "day_vote",
+        "mafia_vote",
+        "day_vote_invalid",
+        "mafia_vote_invalid",
+        "speak_request",
+        "speak_request_reason",
+    }
+    if normalized_kind in hidden_kinds:
+        return False
+
     if "speech_queue" in normalized_kind:
         return False
 
@@ -216,10 +488,65 @@ def _chat_role_and_avatar(speaker: str) -> tuple[str, str]:
     return "assistant", avatars[hashed % len(avatars)]
 
 
+def _progress_text_for_event(*, kind: str, speaker: str, message: str) -> str:
+    normalized_kind = kind.strip().lower()
+    normalized_speaker = speaker.strip()
+    normalized_message = message.strip()
+
+    if normalized_kind in {"speech", "mafia_chat"}:
+        if normalized_speaker:
+            return f"Streaming live chat from {normalized_speaker}"
+        return "Streaming live chat"
+
+    if normalized_kind == "day_vote":
+        if normalized_speaker:
+            return f"{normalized_speaker} submitted a day vote"
+        return "Submitting day vote"
+
+    if normalized_kind == "mafia_vote":
+        if normalized_speaker:
+            return f"{normalized_speaker} submitted a night vote"
+        return "Submitting night vote"
+
+    if normalized_kind == "speech_queue":
+        return "Updating speech queue"
+
+    if normalized_kind == "provider_retry":
+        return "Retrying provider call"
+
+    if normalized_kind in {"night_result", "vote_result", "game_end"} and normalized_message:
+        return normalized_message
+
+    if normalized_kind == "agent_thinking":
+        if normalized_speaker:
+            return f"{normalized_speaker} is thinking"
+        return "Agent is thinking"
+
+    if normalized_kind == "agent_spoke":
+        if normalized_speaker:
+            return f"{normalized_speaker} finished speaking"
+        return "Agent finished speaking"
+
+    if normalized_kind == "phase":
+        return "Advancing game phase"
+
+    if normalized_kind == "setup":
+        return "Preparing match"
+
+    if normalized_kind:
+        return f"Processing {normalized_kind.replace('_', ' ')}"
+    return "Match in progress"
+
+
 def _inject_sidebar_styles() -> None:
     st.markdown(
         """
         <style>
+        section.main > div.block-container {
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+        }
+
         section[data-testid="stSidebar"] {
             background: linear-gradient(180deg, #f7f9fc 0%, #eef2f8 100%);
             border-right: 1px solid #d7dde8;
@@ -341,6 +668,7 @@ def _inject_sidebar_styles() -> None:
 
 def _render_controls(
     result: MatchResult | None,
+    progress_placeholder: Any,
     live_chat_placeholder: Any,
     cycle_placeholder: Any,
     player_status_placeholder: Any,
@@ -348,21 +676,30 @@ def _render_controls(
 ) -> None:
     st.subheader("Match Setup")
     st.text_input("Config Path", key="config_path")
-    run_button = st.button("Run Full Match", use_container_width=True)
-    refresh_button = st.button("Refresh View", use_container_width=True)
+    run_button = st.button("Run Full Match", width="stretch")
+    refresh_button = st.button("Refresh View", width="stretch")
 
-    progress_placeholder = st.empty()
     retry_placeholder = st.empty()
 
     if run_button:
         st.session_state.retry_updates = []
         st.session_state.live_chat_events = []
         st.session_state.speech_queue = []
+        st.session_state.live_vote_events = []
         st.session_state.active_speaker = None
         st.session_state.speech_queue_total = 0
         st.session_state.speech_queue_turn = None
         progress_bar = progress_placeholder.progress(0, text="Preparing match")
-        chat_event_kinds = {"setup", "night_result", "vote_result", "game_end", "speech", "mafia_chat"}
+        chat_event_kinds = {
+            "setup",
+            "night_result",
+            "vote_result",
+            "game_end",
+            "speech",
+            "mafia_chat",
+            "day_vote",
+            "mafia_vote",
+        }
 
         progress_step = {"value": 0}
 
@@ -398,6 +735,19 @@ def _render_controls(
                     if isinstance(item, str)
                 ]
 
+            if kind in {"day_vote", "mafia_vote"}:
+                vote_event = {
+                    "speaker": speaker or "system",
+                    "turn": str(payload.get("turn", st.session_state.turn)),
+                    "phase": str(payload.get("phase", st.session_state.phase)),
+                    "kind": kind,
+                    "message": message,
+                }
+                target_name = payload.get("target_name")
+                if isinstance(target_name, str) and target_name.strip():
+                    vote_event["target_name"] = target_name.strip()
+                st.session_state.live_vote_events.append(vote_event)
+
             if kind == "speech_queue":
                 queue_turn = payload.get("turn")
                 if isinstance(queue_turn, int) and st.session_state.speech_queue_turn != queue_turn:
@@ -431,7 +781,8 @@ def _render_controls(
                 return
 
             progress_step["value"] = min(progress_step["value"] + 1, 95)
-            progress_bar.progress(progress_step["value"], text=message or "Match in progress")
+            progress_text = _progress_text_for_event(kind=kind, speaker=speaker, message=message)
+            progress_bar.progress(progress_step["value"], text=progress_text)
 
             if kind in chat_event_kinds and _should_render_chat_event(kind, message):
                 st.session_state.live_chat_events.append(
@@ -447,7 +798,6 @@ def _render_controls(
                     live_chat_placeholder.container(),
                     st.session_state.live_chat_events,
                     "Live chat stream",
-                    section_title="LLM Chat Replay",
                 )
 
         with st.status("Running match", state="running") as status:
@@ -456,6 +806,7 @@ def _render_controls(
                 result = run_single_match(config, progress_callback=on_progress)
                 st.session_state.match_result = result
                 _set_current_view_state(result)
+                live_chat_placeholder.empty()
                 with cycle_placeholder.container():
                     _render_cycle_indicator()
                 with player_status_placeholder.container():
@@ -482,10 +833,11 @@ def _render_controls(
 def main() -> None:
     st.set_page_config(page_title="llm-mafia", layout="wide")
     _inject_sidebar_styles()
-    st.title("LLM Mafia Dashboard")
     _initialize_state()
+    progress_placeholder = st.empty()
     live_chat_placeholder = st.empty()
     with st.sidebar:
+        st.title("LLM Mafia Dashboard")
         cycle_placeholder = st.empty()
         with cycle_placeholder.container():
             _render_cycle_indicator()
@@ -500,6 +852,7 @@ def main() -> None:
 
         _render_controls(
             st.session_state.match_result,
+            progress_placeholder,
             live_chat_placeholder,
             cycle_placeholder,
             player_status_placeholder,
