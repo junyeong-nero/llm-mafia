@@ -779,13 +779,18 @@ def _build_provider_client(
 
 
 def _parse_speech_request(request_text: str) -> tuple[bool, str]:
-    normalized = request_text.upper()
-    reason = request_text.strip()
-    if ":" in request_text:
-        _, raw_reason = request_text.split(":", maxsplit=1)
-        cleaned = raw_reason.strip()
-        if cleaned:
-            reason = cleaned
+    stripped = request_text.strip()
+    normalized = stripped.upper()
+
+    if normalized.startswith("REQUEST"):
+        reason = stripped.split(":", maxsplit=1)[1].strip() if ":" in stripped else ""
+        return True, reason or "wants to speak"
+
+    if normalized.startswith("PASS"):
+        reason = stripped.split(":", maxsplit=1)[1].strip() if ":" in stripped else ""
+        return False, reason or "no reason provided"
+
+    reason = stripped
     if "PASS" in normalized:
         return False, reason or "no reason provided"
     if "REQUEST" in normalized:
@@ -901,8 +906,8 @@ def _build_day_speech_prompt(
         f"Your strategy: {strategy}\n"
         "Your own public statements so far:\n"
         f"{self_speech_context}\n"
-        "Now give your public statement to all players. Include one specific evidence clue and one next suspicion target. "
-        "Do not repeat your previous statement verbatim; add at least one new concrete point. "
+        "Give one public statement with one concrete clue and one next suspicion target. "
+        "Do not repeat prior wording; add one new point. "
         f"{naming_instruction}"
     )
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from src.engine.game_state import GameEvent, Phase, Player, Role
-from src.runner.single_match import _build_day_speech_prompt, _build_self_speech_context
+from src.runner.single_match import _build_day_speech_prompt, _build_self_speech_context, _parse_speech_request
 
 
 def _build_player() -> Player:
@@ -42,3 +42,17 @@ def test_build_day_speech_prompt_reflects_speech_number_and_prior_context() -> N
     assert "speech #2 out of 2" in prompt_second
     assert "Emma contradicted herself." in prompt_second
     assert prompt_first != prompt_second
+
+
+def test_parse_speech_request_prefers_prefix_over_reason_keywords() -> None:
+    requested, reason = _parse_speech_request("REQUEST: I should pass this message to everyone")
+
+    assert requested is True
+    assert reason == "I should pass this message to everyone"
+
+
+def test_parse_speech_request_handles_pass_prefix() -> None:
+    requested, reason = _parse_speech_request("PASS: no new clue")
+
+    assert requested is False
+    assert reason == "no new clue"
