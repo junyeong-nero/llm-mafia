@@ -349,6 +349,12 @@ def _append_night_phase_talk(
             },
         )
         history = _visible_history_for_player(events, player)
+        agent.refresh_memory(
+            turn=state.turn,
+            visible_history=history,
+            alive_player_names=[alive.name for alive in state.alive_players()],
+            inference_mode="night",
+        )
         text = agent.speak(phase="night", turn=state.turn, prompt=prompt, history=history)
         text = _normalize_player_references(text, state)
         chat_text, voted_target_id, vote_error = _parse_mafia_vote_json(text, state)
@@ -414,6 +420,13 @@ def _append_night_phase_talk(
                 "message": chat_text,
             },
         )
+        _refresh_memory_for_players(
+            state=state,
+            agents=agents,
+            events=events,
+            players=alive_mafia_players,
+            inference_mode="night",
+        )
 
 
 def _append_day_phase_talk(
@@ -432,6 +445,13 @@ def _append_day_phase_talk(
     speeches_by_player: dict[int, int] = {player.id: 0 for player in alive_players}
     max_speeches_per_player = day_max_speeches_per_player
     naming_instruction = _player_naming_instruction(state)
+    _refresh_memory_for_players(
+        state=state,
+        agents=agents,
+        events=events,
+        players=alive_players,
+        inference_mode="day",
+    )
 
     def _enqueue_requester(player_id: int) -> None:
         if speeches_by_player.get(player_id, 0) >= max_speeches_per_player:
@@ -501,6 +521,14 @@ def _append_day_phase_talk(
         )
         if requested:
             _enqueue_requester(player.id)
+
+    _refresh_memory_for_players(
+        state=state,
+        agents=agents,
+        events=events,
+        players=alive_players,
+        inference_mode="day",
+    )
 
     if queue.is_empty():
         events.append(
@@ -676,6 +704,13 @@ def _append_day_phase_talk(
                 "speech_queue": [_player_name(state, queued_player_id) for queued_player_id in queue.items],
             },
         )
+        _refresh_memory_for_players(
+            state=state,
+            agents=agents,
+            events=events,
+            players=alive_players,
+            inference_mode="day",
+        )
 
     _emit_progress(
         progress_callback,
@@ -769,11 +804,21 @@ def _collect_day_vote_ballots(
 ) -> dict[int, int]:
     ballots: dict[int, int] = {}
     naming_instruction = _player_naming_instruction(state)
+    alive_player_names = [player.name for player in state.alive_players()]
     for voter in state.alive_players():
         voter_agent = agents[voter.id]
-        self_speech_context = _build_self_speech_context(events, voter)
+        visible_history = _visible_history_for_player(events, voter)
+        voter_agent.refresh_memory(
+            turn=state.turn,
+            visible_history=visible_history,
+            alive_player_names=alive_player_names,
+            inference_mode="day",
+        )
+        self_speech_context = voter_agent.build_own_dialogue_context()
+        belief_context = voter_agent.build_belief_context(alive_player_names=alive_player_names)
         vote_prompt = voter_agent.build_day_vote_prompt(
             self_speech_context=self_speech_context,
+            belief_context=belief_context,
             naming_instruction=naming_instruction,
         )
         _emit_progress(
@@ -1015,6 +1060,27 @@ def _visible_history_for_player(history: list[GameEvent], player: Player) -> lis
         visible_history.append(event)
 
     return visible_history
+
+
+def _refresh_memory_for_players(
+    *,
+    state: GameState,
+    agents: dict[int, LLMAgent],
+    events: list[GameEvent],
+    players: list[Player],
+    inference_mode: str,
+) -> None:
+    alive_player_names = [alive.name for alive in state.alive_players()]
+    for player in players:
+        if not player.alive:
+            continue
+        history = _visible_history_for_player(events, player)
+        agents[player.id].refresh_memory(
+            turn=state.turn,
+            visible_history=history,
+            alive_player_names=alive_player_names,
+            inference_mode=inference_mode,
+        )
 
 
 def _emit_provider_retry(

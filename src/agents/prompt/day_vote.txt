@@ -1,10 +1,12 @@
-Use only your own prior public statements below to decide your day vote.
-Do not use any other players' statements or hidden information.
+Pick your day vote using only your public statements and visible evidence.
 
 Your own statements:
 {self_speech_context}
 
-Reply in exactly one line with this format only:
+Role inferences (visible only):
+{belief_context}
+
+Reply in one line only:
 VOTE: <exact alive player name>
 
-You cannot vote for yourself. {naming_instruction}
+No self-vote. {naming_instruction}

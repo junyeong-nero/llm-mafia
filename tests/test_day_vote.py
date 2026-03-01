@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.agents.llm_agent import LLMAgent
 from src.engine.game_state import GameEvent, GameState, Phase, Player, Role
 from src.engine.vote import resolve_vote
 from src.runner.single_match import _build_self_speech_context, _parse_day_vote
@@ -49,6 +50,28 @@ def test_parse_day_vote_rejects_self_vote() -> None:
 
     assert target_id is None
     assert error == "target is not an alive non-self player"
+
+
+def test_build_day_vote_prompt_includes_role_belief_context() -> None:
+    agent = LLMAgent(name="Liam", model_id="m", role=Role.CITIZEN)
+    alive_player_names = ["Liam", "Emma", "Ava"]
+    visible_history = [
+        GameEvent(turn=1, phase=Phase.DAY, speaker="Liam", kind="strategy", content="I suspect Ava."),
+        GameEvent(turn=1, phase=Phase.DAY, speaker="Liam", kind="speech", content="Ava changed stories."),
+        GameEvent(turn=1, phase=Phase.DAY, speaker="Emma", kind="speech", content="Ava is suspicious."),
+    ]
+    agent.refresh_memory(turn=2, visible_history=visible_history, alive_player_names=alive_player_names)
+
+    prompt = agent.build_day_vote_prompt(
+        self_speech_context=agent.build_own_dialogue_context(),
+        belief_context=agent.build_belief_context(alive_player_names=alive_player_names),
+        naming_instruction="Use only these player names when referring to others: Liam, Emma, Ava.",
+    )
+
+    assert "Role inferences (visible only):" in prompt
+    assert "Ava | M:" in prompt
+    assert "VOTE: <exact alive player name>" in prompt
+    assert "{belief_context}" not in prompt
 
 
 def test_resolve_vote_returns_top_candidate_when_unique() -> None:
