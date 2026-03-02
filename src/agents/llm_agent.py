@@ -90,6 +90,7 @@ class LLMAgent:
     ) -> str:
         template = _load_prompt_template("speak_request.txt")
         return template.format(
+            self_name=self.name,
             night_result=night_result,
             strategy=strategy,
             naming_instruction=naming_instruction,
@@ -105,6 +106,7 @@ class LLMAgent:
     ) -> str:
         template = _load_prompt_template("followup_request.txt")
         return template.format(
+            self_name=self.name,
             night_result=night_result,
             speaker_name=speaker_name,
             speech=speech,
@@ -120,6 +122,7 @@ class LLMAgent:
     ) -> str:
         template = _load_prompt_template("day_vote.txt")
         return template.format(
+            self_name=self.name,
             self_speech_context=self_speech_context,
             belief_context=belief_context,
             naming_instruction=naming_instruction,

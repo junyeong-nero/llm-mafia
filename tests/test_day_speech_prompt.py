@@ -41,6 +41,8 @@ def test_build_day_speech_prompt_reflects_speech_number_and_prior_context() -> N
     assert "speech #1 out of 2" in prompt_first
     assert "speech #2 out of 2" in prompt_second
     assert "Emma contradicted herself." in prompt_second
+    assert "Speak in first person (I/me/my)." in prompt_first
+    assert "Do not refer to yourself by your own name." in prompt_first
     assert prompt_first != prompt_second
 
 

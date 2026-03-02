@@ -71,6 +71,7 @@ def test_build_day_vote_prompt_includes_role_belief_context() -> None:
     assert "Role inferences (visible only):" in prompt
     assert "Ava | M:" in prompt
     assert "VOTE: <exact alive player name>" in prompt
+    assert "You are Liam. Use first person (I/me/my). Do not refer to yourself as Liam." in prompt
     assert "{belief_context}" not in prompt
 
 

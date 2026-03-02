@@ -315,9 +315,9 @@ def _append_night_phase_talk(
     *,
     progress_callback: ProgressCallback | None = None,
 ) -> None:
-    naming_instruction = _player_naming_instruction(state)
     alive_mafia_players = state.alive_by_role(Role.MAFIA)
     for player in alive_mafia_players:
+        naming_instruction = _player_naming_instruction(state, speaker=player)
         teammate_names = [teammate.name for teammate in alive_mafia_players if teammate.id != player.id]
         if teammate_names:
             teammate_instruction = (
@@ -444,7 +444,6 @@ def _append_day_phase_talk(
     alive_by_id = {player.id: player for player in alive_players}
     speeches_by_player: dict[int, int] = {player.id: 0 for player in alive_players}
     max_speeches_per_player = day_max_speeches_per_player
-    naming_instruction = _player_naming_instruction(state)
     _refresh_memory_for_players(
         state=state,
         agents=agents,
@@ -461,6 +460,7 @@ def _append_day_phase_talk(
         queue.enqueue(player_id)
 
     for player in alive_players:
+        naming_instruction = _player_naming_instruction(state, speaker=player)
         agent = agents[player.id]
         history = _visible_history_for_player(events, player)
         strategy_prompt = (
@@ -604,7 +604,7 @@ def _append_day_phase_talk(
             night_result=night_result,
             strategy=strategy,
             self_speech_context=_build_self_speech_context(events, player),
-            naming_instruction=naming_instruction,
+            naming_instruction=_player_naming_instruction(state, speaker=player),
         )
         _emit_progress(
             progress_callback,
@@ -662,7 +662,7 @@ def _append_day_phase_talk(
                 night_result=night_result,
                 speaker_name=player.name,
                 speech=speech,
-                naming_instruction=naming_instruction,
+                naming_instruction=_player_naming_instruction(state, speaker=candidate),
             )
             followup_text = candidate_agent.speak(
                 phase="day",
@@ -731,12 +731,20 @@ def _player_name(state: GameState, player_id: int) -> str:
     return f"Unknown({player_id})"
 
 
-def _player_naming_instruction(state: GameState) -> str:
-    alive_names = ", ".join(player.name for player in state.alive_players())
-    if not alive_names:
-        alive_names = ", ".join(player.name for player in state.players)
+def _player_naming_instruction(state: GameState, *, speaker: Player) -> str:
+    alive_others = [player.name for player in state.alive_players() if player.id != speaker.id]
+    if not alive_others:
+        alive_others = [player.name for player in state.players if player.id != speaker.id]
+    if alive_others:
+        others_instruction = (
+            f"Use only these player names when referring to others: {', '.join(alive_others)}. "
+        )
+    else:
+        others_instruction = "There are no other players to name right now. "
     return (
-        f"Use only these player names when referring to others: {alive_names}. "
+        f"You are {speaker.name}. Use first person (I/me/my) for yourself. "
+        f"Do not refer to yourself as {speaker.name}. "
+        f"{others_instruction}"
         "Do not use numeric labels such as 'player 1', 'agent 2', or 'P3'."
     )
 
@@ -808,9 +816,9 @@ def _collect_day_vote_ballots(
     progress_callback: ProgressCallback | None = None,
 ) -> dict[int, int]:
     ballots: dict[int, int] = {}
-    naming_instruction = _player_naming_instruction(state)
     alive_player_names = [player.name for player in state.alive_players()]
     for voter in state.alive_players():
+        naming_instruction = _player_naming_instruction(state, speaker=voter)
         voter_agent = agents[voter.id]
         visible_history = _visible_history_for_player(events, voter)
         voter_agent.refresh_memory(
@@ -906,6 +914,7 @@ def _build_day_speech_prompt(
         f"Your strategy: {strategy}\n"
         "Your own public statements so far:\n"
         f"{self_speech_context}\n"
+        "Speak in first person (I/me/my). Do not refer to yourself by your own name. "
         "Give one public statement with one concrete clue and one next suspicion target. "
         "Do not repeat prior wording; add one new point. "
         f"{naming_instruction}"

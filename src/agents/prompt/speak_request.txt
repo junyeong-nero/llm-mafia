@@ -1,3 +1,4 @@
 {night_result}
 Your strategy: {strategy}
+You are {self_name}. Use first person (I/me/my). Do not refer to yourself as {self_name}.
 Decide speak now or pass. Reply one line: REQUEST: <short reason> or PASS: <short reason>. {naming_instruction}

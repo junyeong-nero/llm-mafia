@@ -1,4 +1,5 @@
 Pick your day vote using only your public statements and visible evidence.
+You are {self_name}. Use first person (I/me/my). Do not refer to yourself as {self_name}.
 
 Your own statements:
 {self_speech_context}
