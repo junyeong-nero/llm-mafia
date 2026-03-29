@@ -1,6 +1,6 @@
 # AGENTS.md
 Practical guide for human and AI coding agents in `llm-mafia`.
-This document is based on repository evidence from `pyproject.toml`, `README.md`, `AGENT.md`, `src/`, and `tests/`.
+This document is based on repository evidence from `pyproject.toml`, `README.md`, `src/`, and `tests/`.
 
 ## 1) Project Snapshot
 - Language/runtime: Python `>=3.13` (`pyproject.toml`)
@@ -8,13 +8,13 @@ This document is based on repository evidence from `pyproject.toml`, `README.md`
 - Main entrypoint: `main.py`
 - Streamlit entrypoint: `src/streamlit_app.py`
 - Test framework: `pytest` (dev dependency)
-- Existing policy file: `AGENT.md` (singular)
+- Match runner dispatcher: `src/runner/match_runner.py` (default runner: `graph`)
 
 ## 2) Primary Files To Read First
 - `pyproject.toml` (runtime + dependencies)
 - `README.md` (setup/run commands)
-- `AGENT.md` (workflow + verification rules)
 - `src/config.py` (config schema and validation)
+- `src/runner/match_runner.py` and `src/runner/graph_runner.py` (current runner flow)
 - `tests/` (expected behavior and test style)
 
 ## 3) Setup Commands
@@ -32,13 +32,17 @@ uv run main.py
 ```
 With options:
 ```bash
-uv run main.py --seed 7 --max-rounds 10 --config config.yaml
+uv run main.py --seed 7 --max-rounds 10 --config config.yaml --runner legacy
+```
+Default graph runner explicitly:
+```bash
+uv run main.py --runner graph
 ```
 Streamlit mode:
 ```bash
 uv run main.py --streamlit
 ```
-Entrypoint health checks (from `AGENT.md`):
+Entrypoint health checks:
 ```bash
 uv run python main.py --help
 uv run streamlit run src/streamlit_app.py --help
@@ -121,14 +125,16 @@ Implication: `pytest` is the mandatory automated verification baseline.
 ## 9) Architecture Boundaries
 - Simulation core: `src/engine/`
 - Agent behavior/prompts: `src/agents/`
-- Match orchestration: `src/runner/single_match.py`
+- Match orchestration dispatch: `src/runner/match_runner.py`
+- Graph runner: `src/runner/graph_runner.py`
+- Legacy runner: `src/runner/single_match.py`
 - Provider integration: `src/providers/openrouter_client.py`
 - Metrics/reporting: `src/metrics/`
 - UI: `src/streamlit_app.py`
 Keep changes within these boundaries to avoid cross-layer leakage.
 
 ## 10) Repository Rules To Honor
-`AGENT.md` remains active and stricter when overlapping. Key rules:
+This `AGENTS.md` remains the repository guidance file. Key rules:
 - Small incremental changes with immediate verification
 - File length target `<= 1000` lines
 - Refactor while implementing (avoid long-lived duplication)

@@ -12,6 +12,7 @@ An LLM-based Mafia game simulator where different language models play against e
 
 - **Multi-Agent Simulation**: Watch multiple LLMs interact, debate, and vote in a Mafia game setting.
 - **Realistic Debates with SpeechQueue**: Players request turns to speak through a queue system, simulating the flow of real-world discussions rather than simple turn-based responses.
+- **Selectable Match Runners**: Use the default LangGraph-based runner or switch back to the legacy loop runner for parity checks.
 - **Flexible Role Configuration**: Customize the number of Mafia, Police, Doctor, and Citizens.
 - **Model Diversity**: Assign different LLM models to specific players to compare their strategic capabilities.
 - **Deterministic Runs**: Support for random seeds to reproduce specific game scenarios.
@@ -82,12 +83,15 @@ game:
 llm:
     provider: openrouter
     models:
-        - name: trinity-large
-          model: arcee-ai/trinity-large-preview:free
+        - name: nemotron-3-super
+          model: nvidia/nemotron-3-super-120b-a12b:free
+          count: 3
+        - name: minimax-m2.5
+          model: minimax/minimax-m2.5:free
+          count: 3
+        - name: step-3.5-flash
+          model: stepfun/step-3.5-flash:free
           count: 2
-        - name: solar-pro
-          model: upstage/solar-pro-3:free
-          count: 6
 ```
 
 ## Usage
@@ -104,6 +108,14 @@ Options:
 - `--seed <int>`: Set a random seed for reproducibility.
 - `--max-rounds <int>`: Limit the maximum number of game rounds.
 - `--config <path>`: Specify a custom configuration file.
+- `--runner {graph,legacy}`: Choose the match runner implementation. `graph` is the default.
+
+Examples:
+
+```bash
+uv run main.py --runner graph
+uv run main.py --runner legacy --seed 7 --max-rounds 10
+```
 
 ### Run the Streamlit Dashboard
 
@@ -119,7 +131,10 @@ uv run main.py --streamlit
 - `src/engine/`: Game state management, voting, and phase transitions.
 - `src/providers/`: LLM provider clients (OpenRouter).
 - `src/metrics/`: Performance data collection and reporting.
-- `src/runner/`: Orchestration for single matches and tournaments.
+- `src/runner/match_runner.py`: Dispatches between available runner implementations.
+- `src/runner/graph_runner.py`: LangGraph-based match orchestration used by default.
+- `src/runner/single_match.py`: Legacy loop-based runner kept for parity and fallback.
+- `src/runner/tournament.py`: Multi-match tournament orchestration.
 - `docs/rule.md`: Detailed game rules and mechanics.
 
 ## Development
@@ -129,7 +144,7 @@ uv run main.py --streamlit
 Run the test suite using `pytest`:
 
 ```bash
-uv run pytest
+uv run pytest -q
 ```
 
 ## License
