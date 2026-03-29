@@ -4,10 +4,11 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 from src.metrics.report import to_report_text
-from src.runner.single_match import run_single_match
 from src.config import AppConfig, load_config
+from src.runner.match_runner import RunnerType, run_match
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -40,6 +41,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("src/streamlit_app.py"),
         help="Path to Streamlit app file (default: src/streamlit_app.py)",
+    )
+    parser.add_argument(
+        "--runner",
+        choices=("legacy", "graph"),
+        default="graph",
+        help="Runner implementation to use (default: graph)",
     )
     return parser
 
@@ -82,7 +89,12 @@ def main() -> None:
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(f"Configuration error: {exc}") from exc
     _print_config_summary(config)
-    result = run_single_match(config, seed=args.seed, max_rounds=args.max_rounds)
+    result = run_match(
+        config,
+        seed=args.seed,
+        max_rounds=args.max_rounds,
+        runner=cast(RunnerType, args.runner),
+    )
     print(to_report_text(result.metrics))
     print(f"- logs: {result.output_dir}")
     print(f"- events: {result.events_path}")

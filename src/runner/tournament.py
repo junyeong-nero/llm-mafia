@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from src.config import AppConfig
 
-from src.runner.single_match import MatchResult, run_single_match
+from src.runner.match_runner import MatchResult, run_match
 
 
 @dataclass(frozen=True)
@@ -17,7 +17,7 @@ def run_tournament(config: AppConfig, *, rounds: int, seed: int = 42) -> Tournam
     matches: list[MatchResult] = []
     win_counts: dict[str, int] = {}
     for idx in range(rounds):
-        result = run_single_match(config, seed=seed + idx)
+        result = run_match(config, seed=seed + idx)
         matches.append(result)
         winner = result.state.winner or "draw"
         win_counts[winner] = win_counts.get(winner, 0) + 1

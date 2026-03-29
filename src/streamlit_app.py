@@ -11,7 +11,7 @@ import streamlit as st
 
 from src.config import AppConfig, load_config
 from src.engine.game_state import GameEvent
-from src.runner.single_match import MatchResult, run_single_match
+from src.runner.match_runner import MatchResult, run_match
 
 
 def _load_app_config() -> AppConfig:
@@ -803,7 +803,7 @@ def _render_controls(
         with st.status("Running match", state="running") as status:
             try:
                 config = _load_app_config()
-                result = run_single_match(config, progress_callback=on_progress)
+                result = run_match(config, progress_callback=on_progress)
                 st.session_state.match_result = result
                 _set_current_view_state(result)
                 live_chat_placeholder.empty()
