@@ -34,6 +34,16 @@ class MatchResult:
 ProgressCallback = Callable[[dict[str, object]], None]
 
 
+@dataclass
+class MatchRuntime:
+    config: AppConfig
+    match_seed: int
+    max_rounds: int
+    progress_callback: ProgressCallback | None
+    agents: dict[int, LLMAgent]
+    latest_night_result: str = "Night result: no prior record."
+
+
 def run_single_match(
     config: AppConfig,
     *,
@@ -41,6 +51,34 @@ def run_single_match(
     max_rounds: int = 10,
     progress_callback: ProgressCallback | None = None,
 ) -> MatchResult:
+    state, events, runtime = _build_match_state(config, seed=seed, max_rounds=max_rounds, progress_callback=progress_callback)
+    _record_setup(state, events, progress_callback=runtime.progress_callback)
+
+    while state.turn <= runtime.max_rounds:
+        _advance_match_phase(state, progress_callback=runtime.progress_callback)
+        if state.phase == Phase.END:
+            break
+
+        if state.phase == Phase.NIGHT and _handle_night_phase(state, runtime, events):
+            break
+
+        if state.phase == Phase.DAY:
+            _handle_day_phase(state, runtime, events)
+
+        if state.phase == Phase.VOTE and _handle_vote_phase(state, runtime, events):
+            break
+
+    _ensure_match_winner(state, events, progress_callback=runtime.progress_callback)
+    return _finalize_match(state, events)
+
+
+def _build_match_state(
+    config: AppConfig,
+    *,
+    seed: int | None,
+    max_rounds: int,
+    progress_callback: ProgressCallback | None,
+) -> tuple[GameState, list[GameEvent], MatchRuntime]:
     match_seed = seed if seed is not None else random.SystemRandom().randrange(0, 2**63)
 
     role_counts = {
@@ -59,235 +97,185 @@ def run_single_match(
     provider_client = _build_provider_client(config, progress_callback=progress_callback)
     fallback_models = [model.model for model in config.llm.models]
     agents = {
-        p.id: LLMAgent(
-            name=p.name,
-            model_id=p.model_id,
-            role=p.role,
+        player.id: LLMAgent(
+            name=player.name,
+            model_id=player.model_id,
+            role=player.role,
             client=provider_client,
-            fallback_models=[mid for mid in fallback_models if mid != p.model_id],
+            fallback_models=[mid for mid in fallback_models if mid != player.model_id],
         )
-        for p in players
+        for player in players
     }
-
-    events.append(
-        GameEvent(
-            turn=state.turn,
-            phase=state.phase,
-            speaker="system",
-            kind="setup",
-            content=f"Game started with {len(players)} players.",
-        )
+    runtime = MatchRuntime(
+        config=config,
+        match_seed=match_seed,
+        max_rounds=max_rounds,
+        progress_callback=progress_callback,
+        agents=agents,
     )
+    return state, events, runtime
+
+
+def _record_setup(
+    state: GameState,
+    events: list[GameEvent],
+    *,
+    progress_callback: ProgressCallback | None,
+) -> None:
+    content = f"Game started with {len(state.players)} players."
+    _append_system_event(events, turn=state.turn, phase=state.phase, kind="setup", content=content)
     _emit_progress(
         progress_callback,
         {
             "kind": "setup",
             "turn": state.turn,
             "phase": state.phase.value,
-            "message": f"Game started with {len(players)} players.",
+            "message": content,
             "players_status": _player_status_snapshot(state),
         },
     )
-    latest_night_result = "Night result: no prior record."
 
-    while state.turn <= max_rounds:
-        state.phase = next_phase(state.phase)
-        _emit_progress(
-            progress_callback,
-            {
-                "kind": "phase",
-                "turn": state.turn,
-                "phase": state.phase.value,
-                "message": f"Entering {state.phase.value} phase on turn {state.turn}.",
-                "players_status": _player_status_snapshot(state),
-            },
-        )
-        if state.phase == Phase.END:
-            break
 
-        if state.phase == Phase.NIGHT:
-            _append_night_phase_talk(
-                state,
-                agents,
-                events,
-                progress_callback=progress_callback,
-            )
-            consensus_target, consensus_reason = _resolve_mafia_consensus_target(
-                state,
-                events,
-                seed=match_seed,
-            )
-            if consensus_target is not None:
-                consensus_target_name = _player_name(state, consensus_target)
-                consensus_content = f"Mafia consensus target: {consensus_target_name}."
-            else:
-                consensus_content = f"Mafia consensus not reached: {consensus_reason}."
-            events.append(
-                GameEvent(
-                    turn=state.turn,
-                    phase=state.phase,
-                    speaker="system",
-                    kind="mafia_consensus",
-                    content=consensus_content,
-                )
-            )
-            _emit_progress(
-                progress_callback,
-                {
-                    "kind": "mafia_consensus",
-                    "turn": state.turn,
-                    "phase": state.phase.value,
-                    "message": consensus_content,
-                    "players_status": _player_status_snapshot(state),
-                },
-            )
-            killed, _mafia_target, _doctor_target, _police_target = resolve_night(
-                state,
-                seed=match_seed,
-                mafia_target=consensus_target,
-            )
-            if killed is not None:
-                state.replace_player(killed, alive=False)
-                killed_name = _player_name(state, killed)
-                content = f"Night result: {killed_name} was eliminated."
-            else:
-                content = "Night result: no one was eliminated."
-            latest_night_result = content
-            events.append(
-                GameEvent(
-                    turn=state.turn,
-                    phase=state.phase,
-                    speaker="system",
-                    kind="night_result",
-                    content=content,
-                )
-            )
-            _emit_progress(
-                progress_callback,
-                {
-                    "kind": "night_result",
-                    "turn": state.turn,
-                    "phase": state.phase.value,
-                    "message": content,
-                    "players_status": _player_status_snapshot(state),
-                },
-            )
-            winner_after_night = check_winner(state)
-            if winner_after_night is not None:
-                state.winner = winner_after_night
-                state.phase = Phase.END
-                events.append(
-                    GameEvent(
-                        turn=state.turn,
-                        phase=Phase.END,
-                        speaker="system",
-                        kind="game_end",
-                        content=f"Winner: {winner_after_night}",
-                    )
-                )
-                _emit_progress(
-                    progress_callback,
-                    {
-                        "kind": "game_end",
-                        "turn": state.turn,
-                        "phase": Phase.END.value,
-                        "message": f"Winner: {winner_after_night}",
-                        "players_status": _player_status_snapshot(state),
-                    },
-                )
-                break
+def _advance_match_phase(
+    state: GameState,
+    *,
+    progress_callback: ProgressCallback | None,
+) -> None:
+    state.phase = next_phase(state.phase)
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "phase",
+            "turn": state.turn,
+            "phase": state.phase.value,
+            "message": f"Entering {state.phase.value} phase on turn {state.turn}.",
+            "players_status": _player_status_snapshot(state),
+        },
+    )
 
-        if state.phase == Phase.DAY:
-            _append_day_phase_talk(
-                state,
-                agents,
-                events,
-                night_result=latest_night_result,
-                day_max_speeches_per_player=config.game.day_max_speeches_per_player,
-                progress_callback=progress_callback,
-            )
 
-        if state.phase == Phase.VOTE:
-            ballots = _collect_day_vote_ballots(
-                state,
-                agents,
-                events,
-                progress_callback=progress_callback,
-            )
-            voted_out = resolve_vote(state, ballots=ballots)
-            if voted_out is None:
-                vote_content = "Vote result: tie, no elimination."
-            else:
-                state.replace_player(voted_out, alive=False)
-                vote_content = f"Vote result: {_player_name(state, voted_out)} eliminated."
-            events.append(
-                GameEvent(
-                    turn=state.turn,
-                    phase=state.phase,
-                    speaker="system",
-                    kind="vote_result",
-                    content=vote_content,
-                )
-            )
-            _emit_progress(
-                progress_callback,
-                {
-                    "kind": "vote_result",
-                    "turn": state.turn,
-                    "phase": state.phase.value,
-                    "message": vote_content,
-                    "players_status": _player_status_snapshot(state),
-                },
-            )
-            winner = check_winner(state)
-            if winner is not None:
-                state.winner = winner
-                state.phase = Phase.END
-                events.append(
-                    GameEvent(
-                        turn=state.turn,
-                        phase=Phase.END,
-                        speaker="system",
-                        kind="game_end",
-                        content=f"Winner: {winner}",
-                    )
-                )
-                _emit_progress(
-                    progress_callback,
-                    {
-                        "kind": "game_end",
-                        "turn": state.turn,
-                        "phase": Phase.END.value,
-                        "message": f"Winner: {winner}",
-                        "players_status": _player_status_snapshot(state),
-                    },
-                )
-                break
-            state.turn += 1
+def _handle_night_phase(
+    state: GameState,
+    runtime: MatchRuntime,
+    events: list[GameEvent],
+) -> bool:
+    _append_night_phase_talk(
+        state,
+        runtime.agents,
+        events,
+        progress_callback=runtime.progress_callback,
+    )
+    consensus_target, consensus_reason = _resolve_mafia_consensus_target(
+        state,
+        events,
+        seed=runtime.match_seed,
+    )
+    _append_mafia_consensus_event(
+        state,
+        events,
+        consensus_target=consensus_target,
+        consensus_reason=consensus_reason,
+        progress_callback=runtime.progress_callback,
+    )
+    runtime.latest_night_result = _apply_night_resolution(
+        state,
+        events,
+        seed=runtime.match_seed,
+        mafia_target=consensus_target,
+        progress_callback=runtime.progress_callback,
+    )
+    winner_after_night = check_winner(state)
+    return _set_winner_if_needed(
+        state,
+        events,
+        winner=winner_after_night,
+        progress_callback=runtime.progress_callback,
+    )
 
-    if state.winner is None:
-        state.winner = check_winner(state) or "draw"
-        state.phase = Phase.END
-        events.append(
-            GameEvent(
-                turn=state.turn,
-                phase=Phase.END,
-                speaker="system",
-                kind="game_end",
-                content=f"Winner: {state.winner}",
-            )
-        )
-        _emit_progress(
-            progress_callback,
-            {
-                "kind": "game_end",
-                "turn": state.turn,
-                "phase": Phase.END.value,
-                "message": f"Winner: {state.winner}",
-                "players_status": _player_status_snapshot(state),
-            },
-        )
 
+def _handle_day_phase(
+    state: GameState,
+    runtime: MatchRuntime,
+    events: list[GameEvent],
+) -> None:
+    _append_day_phase_talk(
+        state,
+        runtime.agents,
+        events,
+        night_result=runtime.latest_night_result,
+        day_max_speeches_per_player=runtime.config.game.day_max_speeches_per_player,
+        progress_callback=runtime.progress_callback,
+    )
+
+
+def _handle_vote_phase(
+    state: GameState,
+    runtime: MatchRuntime,
+    events: list[GameEvent],
+) -> bool:
+    ballots = _collect_day_vote_ballots(
+        state,
+        runtime.agents,
+        events,
+        progress_callback=runtime.progress_callback,
+    )
+    _resolve_vote_result(
+        state,
+        events,
+        ballots=ballots,
+        progress_callback=runtime.progress_callback,
+    )
+    winner = check_winner(state)
+    if _set_winner_if_needed(state, events, winner=winner, progress_callback=runtime.progress_callback):
+        return True
+    state.turn += 1
+    return False
+
+
+def _set_winner_if_needed(
+    state: GameState,
+    events: list[GameEvent],
+    *,
+    winner: str | None,
+    progress_callback: ProgressCallback | None,
+) -> bool:
+    if winner is None:
+        return False
+    state.winner = winner
+    state.phase = Phase.END
+    content = f"Winner: {winner}"
+    _append_system_event(events, turn=state.turn, phase=Phase.END, kind="game_end", content=content)
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "game_end",
+            "turn": state.turn,
+            "phase": Phase.END.value,
+            "message": content,
+            "players_status": _player_status_snapshot(state),
+        },
+    )
+    return True
+
+
+def _ensure_match_winner(
+    state: GameState,
+    events: list[GameEvent],
+    *,
+    progress_callback: ProgressCallback | None,
+) -> None:
+    if state.winner is not None:
+        return
+    fallback_winner = check_winner(state) or "draw"
+    _set_winner_if_needed(
+        state,
+        events,
+        winner=fallback_winner,
+        progress_callback=progress_callback,
+    )
+
+
+def _finalize_match(state: GameState, events: list[GameEvent]) -> MatchResult:
     state.events = events
     metrics = collect_metrics(state, events)
     output_dir = build_output_dir()
@@ -297,7 +285,6 @@ def run_single_match(
         "metrics": metrics,
     }
     summary_path = write_summary_json(summary, output_dir)
-
     return MatchResult(
         state=state,
         events=events,
@@ -306,6 +293,17 @@ def run_single_match(
         events_path=events_path,
         summary_path=summary_path,
     )
+
+
+def _append_system_event(
+    events: list[GameEvent],
+    *,
+    turn: int,
+    phase: Phase,
+    kind: str,
+    content: str,
+) -> None:
+    events.append(GameEvent(turn=turn, phase=phase, speaker="system", kind=kind, content=content))
 
 
 def _append_night_phase_talk(
@@ -429,6 +427,76 @@ def _append_night_phase_talk(
         )
 
 
+def _append_mafia_consensus_event(
+    state: GameState,
+    events: list[GameEvent],
+    *,
+    consensus_target: int | None,
+    consensus_reason: str,
+    progress_callback: ProgressCallback | None = None,
+) -> str:
+    if consensus_target is not None:
+        consensus_content = f"Mafia consensus target: {_player_name(state, consensus_target)}."
+    else:
+        consensus_content = f"Mafia consensus not reached: {consensus_reason}."
+    _append_system_event(
+        events,
+        turn=state.turn,
+        phase=state.phase,
+        kind="mafia_consensus",
+        content=consensus_content,
+    )
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "mafia_consensus",
+            "turn": state.turn,
+            "phase": state.phase.value,
+            "message": consensus_content,
+            "players_status": _player_status_snapshot(state),
+        },
+    )
+    return consensus_content
+
+
+def _apply_night_resolution(
+    state: GameState,
+    events: list[GameEvent],
+    *,
+    seed: int,
+    mafia_target: int | None,
+    progress_callback: ProgressCallback | None = None,
+) -> str:
+    killed, _mafia_target, _doctor_target, _police_target = resolve_night(
+        state,
+        seed=seed,
+        mafia_target=mafia_target,
+    )
+    if killed is not None:
+        state.replace_player(killed, alive=False)
+        content = f"Night result: {_player_name(state, killed)} was eliminated."
+    else:
+        content = "Night result: no one was eliminated."
+    _append_system_event(
+        events,
+        turn=state.turn,
+        phase=state.phase,
+        kind="night_result",
+        content=content,
+    )
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "night_result",
+            "turn": state.turn,
+            "phase": state.phase.value,
+            "message": content,
+            "players_status": _player_status_snapshot(state),
+        },
+    )
+    return content
+
+
 def _append_day_phase_talk(
     state: GameState,
     agents: dict[int, LLMAgent],
@@ -441,25 +509,110 @@ def _append_day_phase_talk(
     queue = SpeechQueue()
     strategies: dict[int, str] = {}
     alive_players = state.alive_players()
-    alive_by_id = {player.id: player for player in alive_players}
     speeches_by_player: dict[int, int] = {player.id: 0 for player in alive_players}
     max_speeches_per_player = day_max_speeches_per_player
+    _refresh_day_memory(state, agents, events)
+    _collect_day_strategies_and_initial_requests(
+        state,
+        agents,
+        events,
+        night_result=night_result,
+        strategies=strategies,
+        queue=queue,
+        speeches_by_player=speeches_by_player,
+        max_speeches_per_player=max_speeches_per_player,
+        progress_callback=progress_callback,
+    )
     _refresh_memory_for_players(
         state=state,
         agents=agents,
         events=events,
         players=alive_players,
+            inference_mode="day",
+    )
+    if _emit_initial_speech_queue_state(state, events, queue, progress_callback=progress_callback):
+        return
+    while not queue.is_empty():
+        player_id, speech = _run_next_day_speech(
+            state,
+            agents,
+            events,
+            queue=queue,
+            strategies=strategies,
+            speeches_by_player=speeches_by_player,
+            max_speeches_per_player=max_speeches_per_player,
+            night_result=night_result,
+            progress_callback=progress_callback,
+        )
+        if player_id is None or speech is None:
+            continue
+        _collect_day_followups(
+            state,
+            agents,
+            events,
+            queue=queue,
+            speeches_by_player=speeches_by_player,
+            max_speeches_per_player=max_speeches_per_player,
+            current_speaker_id=player_id,
+            speech=speech,
+            night_result=night_result,
+            progress_callback=progress_callback,
+        )
+        _refresh_day_memory(state, agents, events)
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "speech_queue",
+            "turn": state.turn,
+            "phase": Phase.DAY.value,
+            "message": "All queued speeches finished.",
+            "speech_queue": [],
+        },
+    )
+
+
+def _refresh_day_memory(
+    state: GameState,
+    agents: dict[int, LLMAgent],
+    events: list[GameEvent],
+) -> None:
+    _refresh_memory_for_players(
+        state=state,
+        agents=agents,
+        events=events,
+        players=state.alive_players(),
         inference_mode="day",
     )
 
-    def _enqueue_requester(player_id: int) -> None:
-        if speeches_by_player.get(player_id, 0) >= max_speeches_per_player:
-            return
-        if player_id in queue.items:
-            return
-        queue.enqueue(player_id)
 
-    for player in alive_players:
+def _enqueue_speaker_request(
+    queue: SpeechQueue,
+    *,
+    player_id: int,
+    speeches_by_player: dict[int, int],
+    max_speeches_per_player: int,
+) -> bool:
+    if speeches_by_player.get(player_id, 0) >= max_speeches_per_player:
+        return False
+    if player_id in queue.items:
+        return False
+    queue.enqueue(player_id)
+    return True
+
+
+def _collect_day_strategies_and_initial_requests(
+    state: GameState,
+    agents: dict[int, LLMAgent],
+    events: list[GameEvent],
+    *,
+    night_result: str,
+    strategies: dict[int, str],
+    queue: SpeechQueue,
+    speeches_by_player: dict[int, int],
+    max_speeches_per_player: int,
+    progress_callback: ProgressCallback | None = None,
+) -> None:
+    for player in state.alive_players():
         naming_instruction = _player_naming_instruction(state, speaker=player)
         agent = agents[player.id]
         history = _visible_history_for_player(events, player)
@@ -490,46 +643,72 @@ def _append_day_phase_talk(
                 content=strategy,
             )
         )
-
         request_prompt = agent.build_speak_request_prompt(
             night_result=night_result,
             strategy=strategy,
             naming_instruction=naming_instruction,
         )
-        history = _visible_history_for_player(events, player)
-        request_text = agent.speak(phase="day", turn=state.turn, prompt=request_prompt, history=history).strip()
+        request_history = _visible_history_for_player(events, player)
+        request_text = agent.speak(
+            phase="day",
+            turn=state.turn,
+            prompt=request_prompt,
+            history=request_history,
+        ).strip()
         request_text = _normalize_player_references(request_text, state)
         requested, reason = _parse_speech_request(request_text)
-        request_label = "REQUEST" if requested else "PASS"
-        events.append(
-            GameEvent(
-                turn=state.turn,
-                phase=Phase.DAY,
-                speaker=player.name,
-                kind="speak_request",
-                content=request_label,
-            )
-        )
-        events.append(
-            GameEvent(
-                turn=state.turn,
-                phase=Phase.DAY,
-                speaker=player.name,
-                kind="speak_request_reason",
-                content=reason,
-            )
+        _append_speech_request_events(
+            events,
+            turn=state.turn,
+            speaker_name=player.name,
+            requested=requested,
+            reason=reason,
         )
         if requested:
-            _enqueue_requester(player.id)
+            _enqueue_speaker_request(
+                queue,
+                player_id=player.id,
+                speeches_by_player=speeches_by_player,
+                max_speeches_per_player=max_speeches_per_player,
+            )
 
-    _refresh_memory_for_players(
-        state=state,
-        agents=agents,
-        events=events,
-        players=alive_players,
-        inference_mode="day",
+
+def _append_speech_request_events(
+    events: list[GameEvent],
+    *,
+    turn: int,
+    speaker_name: str,
+    requested: bool,
+    reason: str,
+) -> None:
+    request_label = "REQUEST" if requested else "PASS"
+    events.append(
+        GameEvent(
+            turn=turn,
+            phase=Phase.DAY,
+            speaker=speaker_name,
+            kind="speak_request",
+            content=request_label,
+        )
+    )
+    events.append(
+        GameEvent(
+            turn=turn,
+            phase=Phase.DAY,
+            speaker=speaker_name,
+            kind="speak_request_reason",
+            content=reason,
+        )
     )
 
+
+def _emit_initial_speech_queue_state(
+    state: GameState,
+    events: list[GameEvent],
+    queue: SpeechQueue,
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> bool:
     if queue.is_empty():
         events.append(
             GameEvent(
@@ -550,8 +729,7 @@ def _append_day_phase_talk(
                 "speech_queue": [],
             },
         )
-        return
-
+        return True
     queue_names = [_player_name(state, player_id) for player_id in queue.items]
     events.append(
         GameEvent(
@@ -572,156 +750,193 @@ def _append_day_phase_talk(
             "speech_queue": queue_names,
         },
     )
+    return False
 
-    while not queue.is_empty():
-        player_id = queue.dequeue()
-        if player_id is None:
-            break
-        player = alive_by_id.get(player_id)
-        if player is None:
-            continue
-        if speeches_by_player.get(player_id, 0) >= max_speeches_per_player:
-            continue
-        remaining_queue = [_player_name(state, queued_player_id) for queued_player_id in queue.items]
-        _emit_progress(
-            progress_callback,
-            {
-                "kind": "speech_queue",
-                "turn": state.turn,
-                "phase": Phase.DAY.value,
-                "speaker": player.name,
-                "message": f"Now speaking: {player.name}",
-                "speech_queue": remaining_queue,
-            },
-        )
-        agent = agents[player_id]
-        strategy = strategies.get(player_id, "")
-        history = _visible_history_for_player(events, player)
-        speech_prompt = _build_day_speech_prompt(
-            player=player,
-            speech_number=speeches_by_player.get(player_id, 0) + 1,
-            max_speeches_per_player=max_speeches_per_player,
-            night_result=night_result,
-            strategy=strategy,
-            self_speech_context=_build_self_speech_context(events, player),
-            naming_instruction=_player_naming_instruction(state, speaker=player),
-        )
-        _emit_progress(
-            progress_callback,
-            {
-                "kind": "agent_thinking",
-                "turn": state.turn,
-                "phase": Phase.DAY.value,
-                "speaker": player.name,
-                "message": f"{player.name} is preparing public statement.",
-            },
-        )
-        speech = agent.speak(phase="day", turn=state.turn, prompt=speech_prompt, history=history)
-        speech = _normalize_player_references(speech, state)
-        events.append(
-            GameEvent(
-                turn=state.turn,
-                phase=Phase.DAY,
-                speaker=player.name,
-                kind="speech",
-                content=speech,
-            )
-        )
-        _emit_progress(
-            progress_callback,
-            {
-                "kind": "agent_spoke",
-                "turn": state.turn,
-                "phase": Phase.DAY.value,
-                "speaker": player.name,
-                "message": f"{player.name} posted public statement.",
-            },
-        )
-        _emit_progress(
-            progress_callback,
-            {
-                "kind": "speech",
-                "turn": state.turn,
-                "phase": Phase.DAY.value,
-                "speaker": player.name,
-                "message": speech,
-            },
-        )
-        speeches_by_player[player_id] = speeches_by_player.get(player_id, 0) + 1
 
-        for candidate in state.alive_players():
-            if candidate.id == player_id:
-                continue
-            if speeches_by_player.get(candidate.id, 0) >= max_speeches_per_player:
-                continue
-            if candidate.id in queue.items:
-                continue
-            candidate_agent = agents[candidate.id]
-            candidate_history = _visible_history_for_player(events, candidate)
-            followup_prompt = candidate_agent.build_followup_request_prompt(
-                night_result=night_result,
-                speaker_name=player.name,
-                speech=speech,
-                naming_instruction=_player_naming_instruction(state, speaker=candidate),
-            )
-            followup_text = candidate_agent.speak(
-                phase="day",
-                turn=state.turn,
-                prompt=followup_prompt,
-                history=candidate_history,
-            ).strip()
-            followup_text = _normalize_player_references(followup_text, state)
-            followup_requested, followup_reason = _parse_speech_request(followup_text)
-            followup_label = "REQUEST" if followup_requested else "PASS"
-            events.append(
-                GameEvent(
-                    turn=state.turn,
-                    phase=Phase.DAY,
-                    speaker=candidate.name,
-                    kind="speak_request",
-                    content=followup_label,
-                )
-            )
-            events.append(
-                GameEvent(
-                    turn=state.turn,
-                    phase=Phase.DAY,
-                    speaker=candidate.name,
-                    kind="speak_request_reason",
-                    content=followup_reason,
-                )
-            )
-            if followup_requested:
-                _enqueue_requester(candidate.id)
-
-        _emit_progress(
-            progress_callback,
-            {
-                "kind": "speech_queue",
-                "turn": state.turn,
-                "phase": Phase.DAY.value,
-                "message": f"Follow-up requests processed after {player.name}.",
-                "speech_queue": [_player_name(state, queued_player_id) for queued_player_id in queue.items],
-            },
-        )
-        _refresh_memory_for_players(
-            state=state,
-            agents=agents,
-            events=events,
-            players=alive_players,
-            inference_mode="day",
-        )
-
+def _run_next_day_speech(
+    state: GameState,
+    agents: dict[int, LLMAgent],
+    events: list[GameEvent],
+    *,
+    queue: SpeechQueue,
+    strategies: dict[int, str],
+    speeches_by_player: dict[int, int],
+    max_speeches_per_player: int,
+    night_result: str,
+    progress_callback: ProgressCallback | None = None,
+) -> tuple[int | None, str | None]:
+    player_id = queue.dequeue()
+    if player_id is None:
+        return None, None
+    alive_by_id = {player.id: player for player in state.alive_players()}
+    player = alive_by_id.get(player_id)
+    if player is None:
+        return None, None
+    if speeches_by_player.get(player_id, 0) >= max_speeches_per_player:
+        return None, None
+    remaining_queue = [_player_name(state, queued_player_id) for queued_player_id in queue.items]
     _emit_progress(
         progress_callback,
         {
             "kind": "speech_queue",
             "turn": state.turn,
             "phase": Phase.DAY.value,
-            "message": "All queued speeches finished.",
-            "speech_queue": [],
+            "speaker": player.name,
+            "message": f"Now speaking: {player.name}",
+            "speech_queue": remaining_queue,
         },
     )
+    agent = agents[player_id]
+    strategy = strategies.get(player_id, "")
+    history = _visible_history_for_player(events, player)
+    speech_prompt = _build_day_speech_prompt(
+        player=player,
+        speech_number=speeches_by_player.get(player_id, 0) + 1,
+        max_speeches_per_player=max_speeches_per_player,
+        night_result=night_result,
+        strategy=strategy,
+        self_speech_context=_build_self_speech_context(events, player),
+        naming_instruction=_player_naming_instruction(state, speaker=player),
+    )
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "agent_thinking",
+            "turn": state.turn,
+            "phase": Phase.DAY.value,
+            "speaker": player.name,
+            "message": f"{player.name} is preparing public statement.",
+        },
+    )
+    speech = agent.speak(phase="day", turn=state.turn, prompt=speech_prompt, history=history)
+    speech = _normalize_player_references(speech, state)
+    events.append(
+        GameEvent(
+            turn=state.turn,
+            phase=Phase.DAY,
+            speaker=player.name,
+            kind="speech",
+            content=speech,
+        )
+    )
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "agent_spoke",
+            "turn": state.turn,
+            "phase": Phase.DAY.value,
+            "speaker": player.name,
+            "message": f"{player.name} posted public statement.",
+        },
+    )
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "speech",
+            "turn": state.turn,
+            "phase": Phase.DAY.value,
+            "speaker": player.name,
+            "message": speech,
+        },
+    )
+    speeches_by_player[player_id] = speeches_by_player.get(player_id, 0) + 1
+    return player_id, speech
+
+
+def _collect_day_followups(
+    state: GameState,
+    agents: dict[int, LLMAgent],
+    events: list[GameEvent],
+    *,
+    queue: SpeechQueue,
+    speeches_by_player: dict[int, int],
+    max_speeches_per_player: int,
+    current_speaker_id: int,
+    speech: str,
+    night_result: str,
+    progress_callback: ProgressCallback | None = None,
+) -> None:
+    current_speaker_name = _player_name(state, current_speaker_id)
+    for candidate in state.alive_players():
+        if candidate.id == current_speaker_id:
+            continue
+        if speeches_by_player.get(candidate.id, 0) >= max_speeches_per_player:
+            continue
+        if candidate.id in queue.items:
+            continue
+        candidate_agent = agents[candidate.id]
+        candidate_history = _visible_history_for_player(events, candidate)
+        followup_prompt = candidate_agent.build_followup_request_prompt(
+            night_result=night_result,
+            speaker_name=current_speaker_name,
+            speech=speech,
+            naming_instruction=_player_naming_instruction(state, speaker=candidate),
+        )
+        followup_text = candidate_agent.speak(
+            phase="day",
+            turn=state.turn,
+            prompt=followup_prompt,
+            history=candidate_history,
+        ).strip()
+        followup_text = _normalize_player_references(followup_text, state)
+        followup_requested, followup_reason = _parse_speech_request(followup_text)
+        _append_speech_request_events(
+            events,
+            turn=state.turn,
+            speaker_name=candidate.name,
+            requested=followup_requested,
+            reason=followup_reason,
+        )
+        if followup_requested:
+            _enqueue_speaker_request(
+                queue,
+                player_id=candidate.id,
+                speeches_by_player=speeches_by_player,
+                max_speeches_per_player=max_speeches_per_player,
+            )
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "speech_queue",
+            "turn": state.turn,
+            "phase": Phase.DAY.value,
+            "message": f"Follow-up requests processed after {current_speaker_name}.",
+            "speech_queue": [_player_name(state, queued_player_id) for queued_player_id in queue.items],
+        },
+    )
+
+
+def _resolve_vote_result(
+    state: GameState,
+    events: list[GameEvent],
+    *,
+    ballots: dict[int, int],
+    progress_callback: ProgressCallback | None = None,
+) -> str:
+    voted_out = resolve_vote(state, ballots=ballots)
+    if voted_out is None:
+        vote_content = "Vote result: tie, no elimination."
+    else:
+        state.replace_player(voted_out, alive=False)
+        vote_content = f"Vote result: {_player_name(state, voted_out)} eliminated."
+    _append_system_event(
+        events,
+        turn=state.turn,
+        phase=state.phase,
+        kind="vote_result",
+        content=vote_content,
+    )
+    _emit_progress(
+        progress_callback,
+        {
+            "kind": "vote_result",
+            "turn": state.turn,
+            "phase": state.phase.value,
+            "message": vote_content,
+            "players_status": _player_status_snapshot(state),
+        },
+    )
+    return vote_content
 
 
 def _player_name(state: GameState, player_id: int) -> str:
