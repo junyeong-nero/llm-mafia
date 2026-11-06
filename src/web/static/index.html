@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>llm-mafia — live dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Space+Grotesk:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="masthead">
+    <div class="masthead-brand">
+        <span class="brand-mark"><span data-icon="venetian-mask"></span></span>
+        <span class="mono-label masthead-title">LLM Mafia</span>
+        <span class="mono-label masthead-sub">Simulated deception, streamed live</span>
+    </div>
+    <span id="run-state" class="state-chip" data-state="idle">
+        <span class="state-chip-icon"><span data-icon="circle-check"></span></span>
+        <span class="state-chip-text">Idle</span>
+    </span>
+</header>
+
+<div class="layout">
+    <aside class="rail">
+        <section class="rail-section">
+            <p class="mono-label section-label"><span data-icon="sliders-horizontal"></span>Match Setup</p>
+            <label class="field">
+                <span class="field-label">Config Path</span>
+                <input id="config-path" type="text" value="config.yaml">
+            </label>
+            <div class="field-row">
+                <label class="field">
+                    <span class="field-label">Seed</span>
+                    <input id="seed" type="number" placeholder="random" inputmode="numeric">
+                </label>
+                <label class="field">
+                    <span class="field-label">Max Rounds</span>
+                    <input id="max-rounds" type="number" value="10" min="1" inputmode="numeric">
+                </label>
+            </div>
+            <label class="field">
+                <span class="field-label">Runner</span>
+                <select id="runner">
+                    <option value="graph" selected>graph</option>
+                    <option value="legacy">legacy</option>
+                </select>
+            </label>
+            <button id="run-match" class="button-primary" type="button">
+                <span class="button-icon"><span data-icon="play"></span></span>
+                <span class="button-text">Run Full Match</span>
+            </button>
+            <p id="match-status" class="status-line" hidden>
+                <span data-icon="circle-alert"></span>
+                <span class="status-line-text"></span>
+            </p>
+        </section>
+
+        <section class="rail-section">
+            <p class="mono-label section-label"><span data-icon="activity"></span>Game Progress</p>
+            <div class="cycle">
+                <span id="cycle-icon" class="cycle-icon"><span data-icon="settings"></span></span>
+                <h2 id="cycle-current" class="display-metric">Preparing game</h2>
+            </div>
+            <p id="alive-count" class="micro-copy" hidden></p>
+            <div id="match-progress" class="frame-bar">
+                <div class="progress-fill"></div>
+                <span class="progress-caption">Idle</span>
+            </div>
+        </section>
+
+        <section class="rail-section">
+            <p class="mono-label section-label"><span data-icon="users"></span>Players</p>
+            <table id="player-status" class="player-table" hidden>
+                <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Model</th>
+                    <th>Role</th>
+                    <th><span class="visually-hidden">Status</span></th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <p id="player-status-empty" class="micro-copy">Run a match to see alive/dead status.</p>
+        </section>
+
+        <section class="rail-section">
+            <p class="mono-label section-label"><span data-icon="list-ordered"></span>Speech Queue</p>
+            <div id="speech-queue-progress" class="frame-bar" hidden>
+                <div class="progress-fill"></div>
+                <span class="progress-caption"></span>
+            </div>
+            <div id="speech-queue-cards" class="queue-rows"></div>
+            <p id="speech-queue-empty" class="micro-copy">No pending speakers.</p>
+        </section>
+
+        <section class="rail-section" id="retries-section" hidden>
+            <p class="mono-label section-label"><span data-icon="rotate-cw"></span>Provider Retries</p>
+            <ul id="retries-list" class="mono-list"></ul>
+        </section>
+
+        <section class="rail-section" id="artifacts" hidden>
+            <p class="mono-label section-label"><span data-icon="folder-open"></span>Artifacts</p>
+            <div class="artifacts">
+                <p class="artifact-line"><span data-icon="file-text"></span><span id="artifact-log"></span></p>
+                <p class="artifact-line"><span data-icon="file-text"></span><span id="artifact-events"></span></p>
+                <p class="artifact-line"><span data-icon="file-text"></span><span id="artifact-summary"></span></p>
+            </div>
+        </section>
+    </aside>
+
+    <main class="stage">
+        <div class="stage-copy">
+            <h1 class="display-title">Live chat stream</h1>
+            <p class="lead-copy">Agent speeches, mafia chats, votes, and results — as they happen.</p>
+        </div>
+        <section class="console-card">
+            <div class="console-header">
+                <span class="console-title">
+                    <span data-icon="terminal"></span>
+                    <span class="mono-label console-label">Agent Console</span>
+                </span>
+                <span id="console-live" class="console-live" data-live="false">
+                    <span class="console-pulse" aria-hidden="true"></span>
+                    <span class="mono-label console-live-text">Offline</span>
+                </span>
+            </div>
+            <div id="chat-feed" class="chat-feed" aria-live="polite">
+                <div id="chat-empty" class="chat-empty">
+                    <span data-icon="radio"></span>
+                    <span class="mono-label">Agents are warming up. Events will appear here.</span>
+                </div>
+            </div>
+            <button id="jump-latest" class="jump-latest" type="button" hidden>Jump to latest</button>
+        </section>
+    </main>
+</div>
+
+<script src="/static/icons.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -6,7 +6,7 @@ This document is based on repository evidence from `pyproject.toml`, `README.md`
 - Language/runtime: Python `>=3.13` (`pyproject.toml`)
 - Dependency manager/runner: `uv`
 - Main entrypoint: `main.py`
-- Streamlit entrypoint: `src/streamlit_app.py`
+- Web dashboard: `src/web/server.py` (FastAPI + uvicorn, HTML/JS frontend)
 - Test framework: `pytest` (dev dependency)
 - Match runner dispatcher: `src/runner/match_runner.py` (default runner: `graph`)
 
@@ -38,14 +38,13 @@ Default graph runner explicitly:
 ```bash
 uv run main.py --runner graph
 ```
-Streamlit mode:
+Web dashboard:
 ```bash
-uv run main.py --streamlit
+uv run main.py --web --host 127.0.0.1 --port 8000
 ```
 Entrypoint health checks:
 ```bash
 uv run python main.py --help
-uv run streamlit run src/streamlit_app.py --help
 ```
 
 ## 5) Test Commands (Canonical)
@@ -130,7 +129,12 @@ Implication: `pytest` is the mandatory automated verification baseline.
 - Legacy runner: `src/runner/single_match.py`
 - Provider integration: `src/providers/openrouter_client.py`
 - Metrics/reporting: `src/metrics/`
-- UI: `src/streamlit_app.py`
+- Web dashboard: `src/web/`
+  - `view_model.py` — pure view state + payload→view-event logic (no framework imports)
+  - `match_session.py` — background thread session + SSE hub
+  - `server.py` — FastAPI app, REST/SSE endpoints, static file serving
+  - `static/` — `index.html`, `style.css`, `icons.js`, `app.js` frontend
+  - UI must follow root `DESIGN.md`; use SVG icons from `icons.js`, never emoji
 Keep changes within these boundaries to avoid cross-layer leakage.
 
 ## 10) Repository Rules To Honor

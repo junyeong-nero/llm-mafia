@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
-import sys
 from pathlib import Path
 from typing import cast
 
@@ -32,15 +30,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum match rounds",
     )
     parser.add_argument(
-        "--streamlit",
+        "--web",
         action="store_true",
-        help="Run the Streamlit dashboard instead of a CLI match",
+        help="Run the web dashboard instead of a CLI match",
     )
     parser.add_argument(
-        "--streamlit-app",
-        type=Path,
-        default=Path("src/streamlit_app.py"),
-        help="Path to Streamlit app file (default: src/streamlit_app.py)",
+        "--host",
+        default="127.0.0.1",
+        help="Host binding for the web dashboard (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for the web dashboard (default: 8000)",
     )
     parser.add_argument(
         "--runner",
@@ -68,20 +71,19 @@ def _print_config_summary(config: AppConfig) -> None:
     print(f"- models: {model_summary}")
 
 
-def _run_streamlit_dashboard(app_path: Path) -> None:
-    if not app_path.is_file():
-        raise SystemExit(f"Streamlit app not found: {app_path}")
+def _run_web_dashboard(host: str, port: int) -> None:
+    import uvicorn
 
-    command = [sys.executable, "-m", "streamlit", "run", str(app_path)]
-    completed = subprocess.run(command, check=False)
-    if completed.returncode != 0:
-        raise SystemExit(completed.returncode)
+    from src.web.server import create_app
+
+    print(f"Starting web dashboard at http://{host}:{port}")
+    uvicorn.run(create_app(), host=host, port=port)
 
 
 def main() -> None:
     args = _build_parser().parse_args()
-    if args.streamlit:
-        _run_streamlit_dashboard(args.streamlit_app)
+    if args.web:
+        _run_web_dashboard(args.host, args.port)
         return
 
     try:
