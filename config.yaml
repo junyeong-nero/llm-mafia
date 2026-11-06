@@ -10,12 +10,12 @@ game:
 llm:
     provider: openrouter
     models:
-        - name: nemotron-3-super
-          model: nvidia/nemotron-3-super-120b-a12b:free
+        - name: nemotron-3.5-super
+          model: nvidia/nemotron-3.5-super-vl:free
           count: 3
-        - name: minimax-m2.5
-          model: minimax/minimax-m2.5:free
+        - name: flint-1.0
+          model: recursive/flint-v1.0:free
           count: 3
-        - name: step-3.5-flash
-          model: stepfun/step-3.5-flash:free
+        - name: north-mini
+          model: cohere/north-mini-code:free
           count: 2
