@@ -1,49 +1,49 @@
 # LLM Mafia
 
-LLM들이 서로 속이고 추리하는 마피아 게임 시뮬레이터. OpenRouter를 통해 여러 언어 모델을 플레이어로 배치하고, 각 모델이 얼마나 전략적으로 행동하는지 관찰·비교할 수 있습니다.
+A Mafia game simulator where LLMs deceive and reason against each other. Multiple language models are seated as players through OpenRouter, so you can observe and compare how strategically each model behaves.
 
-![Streamlit Dashboard](assets/screenshot.png)
-
----
-
-## 목차
-
-1. [아키텍처 개요](#아키텍처-개요)
-2. [게임 흐름](#게임-흐름)
-3. [에이전트 내부 구조](#에이전트-내부-구조)
-4. [시작하기](#시작하기)
-5. [설정](#설정)
-6. [실행 방법](#실행-방법)
-7. [프로젝트 구조](#프로젝트-구조)
-8. [개발](#개발)
+![Web Dashboard](assets/demo.gif)
 
 ---
 
-## 아키텍처 개요
+## Table of Contents
+
+1. [Architecture Overview](#architecture-overview)
+2. [Game Flow](#game-flow)
+3. [Agent Internals](#agent-internals)
+4. [Getting Started](#getting-started)
+5. [Configuration](#configuration)
+6. [Usage](#usage)
+7. [Project Structure](#project-structure)
+8. [Development](#development)
+
+---
+
+## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                        main.py                          │
-│            CLI 진입점 · 러너 선택 · Streamlit 실행      │
+│     CLI entrypoint · runner selection · web dashboard   │
 └────────────────────────┬────────────────────────────────┘
                          │
           ┌──────────────┴──────────────┐
-          │        match_runner         │  러너 디스패처
+          │        match_runner         │  runner dispatcher
           └──────────┬──────────────────┘
           ┌──────────┴──────────┐
           │                     │
-   graph_runner          single_match          ← 러너 구현체
-   (LangGraph 기반)      (레거시 루프)
+   graph_runner          single_match          ← runner implementations
+   (LangGraph-based)     (legacy loop)
           │
-          │ 각 노드(node)에서
+          │ from each node
           │
    ┌──────┴────────────────────────────────┐
    │              engine/                  │
-   │  game_state  · phase · rules · vote   │  게임 규칙·상태
+   │  game_state  · phase · rules · vote   │  game rules & state
    └──────────────────────────────────────┘
    ┌──────────────────────────────────────┐
    │              agents/                 │
-   │  LLMAgent · RoleBelief · Prompt      │  LLM 플레이어
+   │  LLMAgent · RoleBelief · Prompt      │  LLM players
    └──────────────────────────────────────┘
    ┌──────────────────────────────────────┐
    │            providers/               │
@@ -51,69 +51,69 @@ LLM들이 서로 속이고 추리하는 마피아 게임 시뮬레이터. OpenRo
    └──────────────────────────────────────┘
    ┌──────────────────────────────────────┐
    │            metrics/ · io/           │
-   │      이벤트 로그 · 통계 수집          │
+   │     event logs · stats collection    │
    └──────────────────────────────────────┘
 ```
 
-**기본 실행 흐름**: `main.py` → `match_runner` → `graph_runner`(기본값) 또는 `single_match`(레거시) → 각 노드가 `engine`과 `agents`를 호출 → 결과를 `metrics`·`io`에 기록
+**Default execution flow**: `main.py` → `match_runner` → `graph_runner` (default) or `single_match` (legacy) → each node calls `engine` and `agents` → results are recorded via `metrics` and `io`.
 
 ---
 
-## 게임 흐름
+## Game Flow
 
-한 판은 다음 네 단계를 게임 종료 조건이 충족될 때까지 반복합니다.
+A match repeats the following phases until a win condition is met.
 
 ```
 SETUP
-  │  플레이어 배치, 역할 무작위 배정
+  │  seat players, assign roles at random
   ▼
 NIGHT  ──────────────────────────────────────────────────────┐
-  │  마피아 전용 채팅 → 합의 투표 → 제거 대상 결정             │
-  │  경찰: 조사 / 의사: 보호 (내부 처리)                       │
+  │  mafia-only chat → consensus vote → choose elimination    │
+  │  police: investigate / doctor: protect (internal)         │
   ▼                                                          │
 DAY    ──────────────────────────────────────────────────────┤
-  │  전략 수립 → SpeechQueue 기반 토론 (아래 다이어그램 참고)   │
+  │  plan strategy → SpeechQueue-based discussion (see below) │
   ▼                                                          │
 VOTE                                                         │
-  │  각 플레이어 투표 → 다수결 제거 → 승리 조건 확인           │
-  └─────────────────── 게임 종료 아니면 반복 ────────────────┘
+  │  every player votes → majority elimination → win check    │
+  └──────────────────── repeat unless game over ─────────────┘
 ```
 
-### SpeechQueue — 낮 토론 메커니즘
+### SpeechQueue — Day Discussion Mechanism
 
-낮 단계에서는 모든 플레이어가 동시에 말하는 것이 아니라, 발언 요청 큐를 통해 순서를 결정합니다. 실제 토론처럼 이전 발언에 반응해 새로운 발언이 이어집니다.
+During the day, players do not all speak at once. A speech-request queue decides the order, so new speeches follow up on earlier ones like a real debate.
 
 ```
-[전략 수립] ──→ [초기 발언 요청]
+[plan strategy] ──→ [initial speech requests]
                      │
            ┌─────────┴──────────┐
            │ REQUEST            │ PASS
-      큐에 등록              큐 비어있음?
+      enqueue               queue empty?
            │                    │
            └─────────┬──────────┘
-                  큐 비어있음?
+                 queue empty?
                   │         │
-                  아니오     예
+                  no        yes
                   │         │
-           [다음 발언자 발언]  [투표 단계로]
+         [next speaker talks]  [go to vote]
                   │
-           [나머지 플레이어 팔로우업 요청]
+         [follow-up requests from other players]
                   │
            ┌──────┴──────┐
            │ REQUEST     │ PASS
-        큐에 등록     남은 발언자?
+        enqueue      speakers left?
            │             │
            └──────┬──────┘
-                  └──→ [큐 비어있음?] ──예──→ [투표 단계로]
+                  └──→ [queue empty?] ──yes──→ [go to vote]
                               │
-                             아니오
+                              no
                               │
-                        [다음 발언자 발언]
+                     [next speaker talks]
 ```
 
-### LangGraph 노드 구조
+### LangGraph Node Structure
 
-`graph_runner`는 LangGraph의 `StateGraph`로 위 흐름을 노드-엣지로 구현합니다.
+`graph_runner` implements the flow above as nodes and edges in a LangGraph `StateGraph`.
 
 ```
 START
@@ -127,7 +127,7 @@ START
                            │       └─→ day_collect_initial_requests
                            │               ├─→ day_run_next_speech ←┐
                            │               │       └─→ day_collect_followups ─┘
-                           │               └─→ advance_phase (큐 소진 시)
+                           │               └─→ advance_phase (when queue is drained)
                            │
                            ├─→ vote_collect_ballots
                            │       └─→ vote_resolve
@@ -136,57 +136,57 @@ START
                            └─→ finalize_state ──→ END
 ```
 
-`check_winner`에서 승자가 결정되면 `finalize_state`로, 그렇지 않으면 `advance_phase`로 돌아가 다음 라운드를 시작합니다.
+If `check_winner` finds a winner, the graph moves to `finalize_state`; otherwise it returns to `advance_phase` and starts the next round.
 
 ---
 
-## 에이전트 내부 구조
+## Agent Internals
 
-각 플레이어는 `LLMAgent` 인스턴스입니다. 단순히 LLM을 호출하는 것 외에 자체 메모리와 추론 시스템을 갖춥니다.
+Each player is an `LLMAgent` instance. Beyond calling an LLM, it keeps its own memory and inference system.
 
-### RoleBelief — 역할 추론
+### RoleBelief — Role Inference
 
-에이전트는 게임 이벤트를 분석해 다른 플레이어가 마피아·의사·시민일 확률을 추적합니다.
+Agents analyze game events and track the probability that each other player is mafia, doctor, or citizen.
 
 ```
-visible_history (이벤트 로그)
+visible_history (event log)
         │
-        ├─ 낮 이벤트 ──→ _apply_day_inference
-        │    · 투표 기록    (+0.14 mafia)
-        │    · 의심 발언    (+0.20 mafia)
-        │    · 신뢰 발언    (+0.15 citizen)
-        │    · 보호 발언    (+0.14 doctor)
+        ├─ day events ──→ _apply_day_inference
+        │    · vote records       (+0.14 mafia)
+        │    · suspicious speech  (+0.20 mafia)
+        │    · trusting speech    (+0.15 citizen)
+        │    · protective speech  (+0.14 doctor)
         │
-        └─ 밤 이벤트 ──→ _apply_night_inference
-             · 마피아 투표  (+0.18 mafia)
-             · 합의 대상    (+0.10 mafia)
+        └─ night events ──→ _apply_night_inference
+             · mafia vote         (+0.18 mafia)
+             · consensus target   (+0.10 mafia)
                     │
                     ▼
            RoleBelief { mafia: 0.xx, doctor: 0.xx, citizen: 0.xx, evidence: [...] }
 ```
 
-이 확률값은 투표 결정 시 `build_belief_context()`를 통해 LLM 프롬프트에 주입됩니다.
+These probabilities are injected into the LLM prompt through `build_belief_context()` when the agent decides how to vote.
 
-### 프롬프트 구성
+### Prompt Composition
 
-각 에이전트의 발언은 세 레이어로 구성됩니다.
+Each agent's output is built from three layers.
 
-| 레이어 | 내용 |
-|--------|------|
-| System | 역할별 페르소나 (`persona_mafia.txt` 등) |
-| History | 최근 이벤트 컨텍스트 (낮 6개, 밤 3개, 역할 신호 태그) |
-| User | 현재 행동 프롬프트 (전략 수립 / 발언 요청 / 투표 등) |
+| Layer | Content |
+|-------|---------|
+| System | Role-specific persona (`persona_mafia.txt`, etc.) |
+| History | Recent event context (6 day events, 3 night events, role-signal tags) |
+| User | Current action prompt (strategy / speech request / vote, etc.) |
 
 ---
 
-## 시작하기
+## Getting Started
 
-### 필요 조건
+### Requirements
 
-- Python 3.13 이상
-- [uv](https://github.com/astral-sh/uv) (패키지 관리)
+- Python 3.13+
+- [uv](https://github.com/astral-sh/uv) (package management)
 
-### 설치
+### Installation
 
 ```bash
 git clone https://github.com/your-username/llm-mafia.git
@@ -195,19 +195,19 @@ cd llm-mafia
 uv sync
 
 cp .env.sample .env
-# .env에 OPENROUTER_API_KEY 입력
+# put your OPENROUTER_API_KEY in .env
 ```
 
 ---
 
-## 설정
+## Configuration
 
-`config.yaml`에서 게임 규칙과 모델 배치를 지정합니다.
+`config.yaml` defines the game rules and model seating.
 
 ```yaml
 game:
     player_count: 8
-    day_max_speeches_per_player: 2   # 낮 단계 1인당 최대 발언 횟수
+    day_max_speeches_per_player: 2   # max speeches per player during the day
     roles:
         mafia: 2
         police: 1
@@ -219,7 +219,7 @@ llm:
     models:
         - name: nemotron-3-super
           model: nvidia/nemotron-3-super-120b-a12b:free
-          count: 3          # 이 모델을 3명의 플레이어에 배정
+          count: 3          # seat this model as 3 players
         - name: minimax-m2.5
           model: minimax/minimax-m2.5:free
           count: 3
@@ -228,100 +228,120 @@ llm:
           count: 2
 ```
 
-`roles`의 합계와 `models[*].count`의 합계가 `player_count`와 일치해야 합니다.
+The sum of `roles` and the sum of `models[*].count` must both equal `player_count`.
 
 ---
 
-## 실행 방법
+## Usage
 
-### 단일 매치 (CLI)
+### Single match (CLI)
 
 ```bash
 uv run main.py
 ```
 
-| 옵션 | 기본값 | 설명 |
-|------|--------|------|
-| `--runner {graph,legacy}` | `graph` | 러너 선택 (`graph`: LangGraph, `legacy`: 반복문) |
-| `--seed <int>` | 랜덤 | 재현 가능한 시드 |
-| `--max-rounds <int>` | `10` | 최대 라운드 수 |
-| `--config <path>` | `config.yaml` | 설정 파일 경로 |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--runner {graph,legacy}` | `graph` | Runner selection (`graph`: LangGraph, `legacy`: loop) |
+| `--seed <int>` | random | Seed for reproducible runs |
+| `--max-rounds <int>` | `10` | Maximum number of rounds |
+| `--config <path>` | `config.yaml` | Config file path |
 
 ```bash
-# 예시
+# examples
 uv run main.py --runner graph
 uv run main.py --runner legacy --seed 7 --max-rounds 10
 ```
 
-### Streamlit 대시보드
+### Web dashboard (HTML + JS)
 
-게임 진행을 실시간으로 시각화하고 이벤트 로그를 탐색할 수 있습니다.
+Visualizes the match in real time. The browser connects to a FastAPI server over SSE (Server-Sent Events) and streams speeches, votes, and results as they happen. The UI follows [`DESIGN.md`](DESIGN.md) and uses inline SVG icons.
 
 ```bash
-uv run main.py --streamlit
+uv run main.py --web
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--web` | off | Launch the web dashboard (instead of a CLI match) |
+| `--host <str>` | `127.0.0.1` | Dashboard bind host |
+| `--port <int>` | `8000` | Dashboard port |
+
+```bash
+# example
+uv run main.py --web --port 9000
 ```
 
 ---
 
-## 프로젝트 구조
+## Project Structure
 
 ```
 llm-mafia/
-├── main.py                        # CLI 진입점
-├── config.yaml                    # 게임 및 모델 설정
+├── main.py                        # CLI entrypoint
+├── config.yaml                    # game and model settings
+├── DESIGN.md                      # dashboard design system
 │
 ├── src/
 │   ├── agents/
-│   │   ├── llm_agent.py           # LLMAgent, RoleBelief, 역할 추론 로직
+│   │   ├── llm_agent.py           # LLMAgent, RoleBelief, role inference logic
 │   │   └── prompt/
-│   │       ├── personas.py        # 역할별 시스템 프롬프트 로더
-│   │       └── *.txt              # 페르소나 / 행동 프롬프트 템플릿
+│   │       ├── personas.py        # role-specific system prompt loader
+│   │       └── *.txt              # persona / action prompt templates
 │   │
 │   ├── engine/
-│   │   ├── game_state.py          # 불변 데이터 모델 (Player, GameState, GameEvent)
-│   │   ├── phase.py               # 페이즈 전환 로직
-│   │   ├── rules.py               # 플레이어 배치, 승리 조건, 밤 해결
-│   │   └── vote.py                # 낮 투표 집계
+│   │   ├── game_state.py          # immutable data models (Player, GameState, GameEvent)
+│   │   ├── phase.py               # phase transition logic
+│   │   ├── rules.py               # seating, win conditions, night resolution
+│   │   └── vote.py                # day vote tally
 │   │
 │   ├── runner/
-│   │   ├── match_runner.py        # graph/legacy 러너 디스패처
-│   │   ├── graph_runner.py        # LangGraph 기반 러너 (기본값)
-│   │   ├── single_match.py        # 레거시 루프 러너 + 공유 헬퍼
-│   │   ├── speech_queue.py        # SpeechQueue (낮 토론 순서 관리)
-│   │   └── tournament.py          # 다중 매치 토너먼트 오케스트레이션
+│   │   ├── match_runner.py        # graph/legacy runner dispatcher
+│   │   ├── graph_runner.py        # LangGraph-based runner (default)
+│   │   ├── single_match.py        # legacy loop runner + shared helpers
+│   │   ├── speech_queue.py        # SpeechQueue (day discussion ordering)
+│   │   └── tournament.py          # multi-match tournament orchestration
+│   │
+│   ├── web/
+│   │   ├── server.py              # FastAPI app (static serving + REST/SSE API)
+│   │   ├── match_session.py       # background match session + SSE event hub
+│   │   ├── view_model.py          # progress payload → view state logic
+│   │   └── static/
+│   │       ├── index.html         # dashboard HTML
+│   │       ├── style.css          # dashboard styles (based on DESIGN.md)
+│   │       ├── icons.js           # inline SVG icons (Lucide, no emoji)
+│   │       └── app.js             # SSE subscription and rendering logic
 │   │
 │   ├── providers/
-│   │   ├── openrouter_client.py   # OpenRouter HTTP 클라이언트
-│   │   └── model_registry.py      # config → 모델 슬롯 변환
+│   │   ├── openrouter_client.py   # OpenRouter HTTP client
+│   │   └── model_registry.py      # config → model slot conversion
 │   │
 │   ├── metrics/
-│   │   ├── collector.py           # 게임 통계 수집
-│   │   └── report.py              # 통계 리포트 출력
+│   │   ├── collector.py           # game statistics collection
+│   │   └── report.py              # statistics report output
 │   │
-│   ├── io/
-│   │   ├── event_log.py           # JSONL 이벤트 로그 / 요약 JSON 저장
-│   │   └── config.py              # 설정 파일 로더
-│   │
-│   └── streamlit_app.py           # 대시보드 UI
+│   └── io/
+│       ├── event_log.py           # JSONL event log / summary JSON writer
+│       └── config.py              # config file loader
 │
 ├── docs/
-│   └── rule.md                    # 게임 규칙 상세 설명
-└── tests/                         # pytest 테스트 모음
+│   └── rule.md                    # detailed game rules
+└── tests/                         # pytest test suite
 ```
 
 ---
 
-## 개발
+## Development
 
-### 테스트 실행
+### Running tests
 
 ```bash
 uv run pytest -q
 ```
 
-### 두 러너 비교
+### Comparing the two runners
 
-`graph` 러너와 `legacy` 러너는 동일한 헬퍼 함수(`single_match.py`)를 공유합니다. 같은 시드로 실행해 결과를 비교할 수 있습니다.
+The `graph` and `legacy` runners share the same helper functions (`single_match.py`). Run both with the same seed to compare results.
 
 ```bash
 uv run main.py --runner graph  --seed 42
@@ -332,4 +352,4 @@ uv run main.py --runner legacy --seed 42
 
 ## License
 
-MIT License — [LICENSE](LICENSE) 참고
+MIT License — see [LICENSE](LICENSE)
