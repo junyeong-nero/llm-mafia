@@ -8,14 +8,8 @@ game:
         citizen: 4
 
 llm:
-    provider: openrouter
+    provider: exaone
     models:
-        - name: nemotron-3.5-super
-          model: nvidia/nemotron-3.5-super-vl:free
-          count: 3
-        - name: flint-1.0
-          model: recursive/flint-v1.0:free
-          count: 3
-        - name: north-mini
-          model: cohere/north-mini-code:free
-          count: 2
+        - name: k-exaone-2.5
+          model: k-exaone_v2.5
+          count: 8

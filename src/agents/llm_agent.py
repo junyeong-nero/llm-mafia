@@ -9,7 +9,7 @@ from typing import Literal
 
 from src.agents.prompt.personas import role_persona
 from src.engine.game_state import GameEvent, Phase, Role
-from src.providers.openrouter_client import OpenRouterClient, OpenRouterError
+from src.providers.chat_client import ChatClient, ProviderError
 
 
 _MAX_OWN_DIALOGUE_ITEMS = 20
@@ -31,6 +31,12 @@ _SUSPICION_KEYWORDS = {
     "deceptive",
     "vote out",
     "eliminate",
+    "의심",
+    "수상",
+    "마피아",
+    "거짓",
+    "모순",
+    "추방",
 }
 
 _PROTECTION_KEYWORDS = {
@@ -40,6 +46,10 @@ _PROTECTION_KEYWORDS = {
     "guard",
     "doctor",
     "heal",
+    "보호",
+    "치료",
+    "의사",
+    "구하",
 }
 
 _TRUST_KEYWORDS = {
@@ -49,6 +59,11 @@ _TRUST_KEYWORDS = {
     "credible",
     "consistent",
     "reliable",
+    "신뢰",
+    "믿",
+    "시민",
+    "무고",
+    "일관",
 }
 
 _ROLE_SIGNAL_KEYWORDS = _SUSPICION_KEYWORDS | _PROTECTION_KEYWORDS | _TRUST_KEYWORDS
@@ -79,8 +94,7 @@ class LLMAgent:
     name: str
     model_id: str
     role: Role
-    client: OpenRouterClient | None = None
-    fallback_models: list[str] = field(default_factory=list)
+    client: ChatClient | None = None
     own_dialogue_history: list[str] = field(default_factory=list)
     role_beliefs_by_name: dict[str, RoleBelief] = field(default_factory=dict)
     last_memory_turn: int = 0
@@ -219,20 +233,25 @@ class LLMAgent:
 
         messages.append({"role": "user", "content": prompt})
 
-        try:
-            response = self.client.chat_completion(
-                messages=messages,
-                model=self.model_id,
-                fallback_models=self.fallback_models,
-            )
-        except OpenRouterError:
-            return f"[{self.name}/{self.model_id}] fallback response on {phase} turn {turn}."
-        text = response.get("text")
-        if not isinstance(text, str) or not text.strip():
-            return (
-                f"[{self.name}/{self.model_id}] empty response on {phase} turn {turn}."
-            )
-        return text.strip()
+        for language_attempt in range(2):
+            response = self.client.chat_completion(messages=messages, model=self.model_id)
+            actual_model = response.get("model")
+            if not isinstance(actual_model, str) or actual_model.removesuffix(":free") != self.model_id.removesuffix(":free"):
+                raise ProviderError(f"requested model={self.model_id}, received model={actual_model}")
+            text = response.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ProviderError(f"model={self.model_id}: empty response on {phase} turn {turn}")
+            if phase == "vote" or re.search(r"[가-힣]", text):
+                return text.strip()
+            if language_attempt == 0:
+                messages.extend([
+                    {"role": "assistant", "content": text},
+                    {"role": "user", "content": (
+                        "방금 응답에 한국어가 없습니다. 같은 판단을 한국어로 다시 작성하세요. "
+                        "플레이어 이름, 파싱용 접두사, JSON 키와 현재 행동의 출력 형식은 유지하세요."
+                    )},
+                ])
+        raise ProviderError(f"model={self.model_id}: non-Korean response after language retry")
 
 
 def _history_to_context(history: list[GameEvent]) -> str:
@@ -645,7 +664,11 @@ def _contains_keyword(content: str, keywords: set[str]) -> bool:
 
 def _mentions_name(content: str, target_name: str) -> bool:
     return (
-        re.search(rf"\b{re.escape(target_name)}\b", content, flags=re.IGNORECASE)
+        re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(target_name)}(?![A-Za-z0-9_])",
+            content,
+            flags=re.IGNORECASE,
+        )
         is not None
     )
 

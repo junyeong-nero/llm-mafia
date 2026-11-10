@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from itertools import count
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,10 @@ def _stub_output_dirs(monkeypatch: Any, tmp_path: Path) -> None:
         return target
 
     monkeypatch.setattr("src.runner.single_match.build_output_dir", fake_build_output_dir)
-    monkeypatch.setattr("src.runner.single_match._build_provider_client", lambda config, progress_callback=None: None)
+    monkeypatch.setattr(
+        "src.runner.single_match.build_provider_clients",
+        lambda config, on_retry=None: {"openrouter": None},
+    )
 
 
 def _event_signature(result: Any) -> list[tuple[int, object, str, str, str]]:
@@ -128,6 +132,22 @@ def test_graph_runner_matches_legacy_across_multiple_seeds(monkeypatch: Any, tmp
         assert graph_result.state.winner == legacy_result.state.winner
         assert graph_result.metrics == legacy_result.metrics
         assert _event_signature(graph_result) == _event_signature(legacy_result)
+
+
+def test_graph_runner_supports_more_than_25_steps(monkeypatch: Any, tmp_path: Path) -> None:
+    _stub_output_dirs(monkeypatch, tmp_path)
+    monkeypatch.setattr("src.agents.llm_agent.LLMAgent.speak", lambda *args, **kwargs: "PASS: 새 단서 없음")
+    config = _build_config()
+    config = replace(
+        config,
+        game=GameConfig(player_count=8, roles=RoleConfig(mafia=1, police=0, doctor=0, citizen=7), day_max_speeches_per_player=1),
+        llm=replace(config.llm, models=[replace(model, count=4) for model in config.llm.models]),
+    )
+    graph = run_graph_match(config, seed=42, max_rounds=3)
+    legacy = run_single_match(config, seed=42, max_rounds=3)
+    assert graph.state.winner == "draw"
+    assert graph.metrics["night_resolutions"] == 3
+    assert _event_signature(graph) == _event_signature(legacy)
 
 
 def test_run_match_dispatches_to_requested_runner(monkeypatch: Any) -> None:

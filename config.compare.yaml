@@ -1,0 +1,25 @@
+# Three matches rotate these equal-sized model groups through the same seats.
+# OpenRouter free Top Weekly #1/#2, checked 2026-11-10 (last 7 days, tokens).
+# https://openrouter.ai/models?max_price=0&order=top-weekly
+game:
+    player_count: 6
+    day_max_speeches_per_player: 1
+    roles:
+        mafia: 1
+        police: 1
+        doctor: 1
+        citizen: 3
+
+llm:
+    provider: openrouter
+    models:
+        - name: k-exaone-2.5
+          provider: exaone
+          model: k-exaone_v2.5
+          count: 2
+        - name: nemotron-3-ultra
+          model: nvidia/nemotron-3-ultra-550b-a55b:free
+          count: 2
+        - name: nemotron-3.5-super-vl
+          model: nvidia/nemotron-3.5-super-vl:free
+          count: 2

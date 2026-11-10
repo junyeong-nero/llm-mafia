@@ -26,6 +26,7 @@ class ModelConfig:
     name: str
     model: str
     count: int
+    provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -108,17 +109,26 @@ def load_config(path: Path) -> AppConfig:
     if not isinstance(models_raw, list) or not models_raw:
         raise ValueError("'llm.models' must be a non-empty list")
 
+    provider = _expect_str(llm_raw, "provider")
+    _validate_provider(provider)
     models: list[ModelConfig] = []
+    model_names: set[str] = set()
     model_total = 0
     for index, model_raw in enumerate(models_raw):
         model_map = _expect_mapping(model_raw, f"llm.models[{index}]")
+        model_provider = _expect_str(model_map, "provider") if "provider" in model_map else None
+        _validate_provider(model_provider or provider)
         model = ModelConfig(
             name=_expect_str(model_map, "name"),
             model=_expect_str(model_map, "model"),
             count=_expect_int(model_map, "count"),
+            provider=model_provider,
         )
         if model.count <= 0:
             raise ValueError(f"llm.models[{index}].count must be > 0")
+        if model.name in model_names:
+            raise ValueError(f"duplicate model name: {model.name}")
+        model_names.add(model.name)
         models.append(model)
         model_total += model.count
 
@@ -128,9 +138,7 @@ def load_config(path: Path) -> AppConfig:
             f"(player_count={player_count}, model_total={model_total})"
         )
 
-    llm = LLMConfig(provider=_expect_str(llm_raw, "provider"), models=models)
-    if llm.provider != "openrouter":
-        raise ValueError("'llm.provider' must be 'openrouter'")
+    llm = LLMConfig(provider=provider, models=models)
 
     game = GameConfig(
         player_count=player_count,
@@ -138,3 +146,8 @@ def load_config(path: Path) -> AppConfig:
         day_max_speeches_per_player=day_max_speeches_per_player,
     )
     return AppConfig(game=game, llm=llm)
+
+
+def _validate_provider(provider: str) -> None:
+    if provider not in {"openrouter", "exaone"}:
+        raise ValueError("provider must be 'openrouter' or 'exaone'")

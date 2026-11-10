@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import cast
 
 from src.metrics.report import to_report_text
+from src.metrics.comparison import comparison_report
 from src.config import AppConfig, load_config
 from src.runner.match_runner import RunnerType, run_match
+from src.runner.tournament import run_tournament
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -51,12 +53,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default="graph",
         help="Runner implementation to use (default: graph)",
     )
+    parser.add_argument(
+        "--tournament",
+        type=int,
+        metavar="MATCHES",
+        help="Compare models with balanced seat rotation (equal counts, full model cycles required)",
+    )
     return parser
 
 
 def _print_config_summary(config: AppConfig) -> None:
     model_summary = ", ".join(
-        f"{model.name}:{model.model} x{model.count}" for model in config.llm.models
+        f"{model.name}:{model.provider or config.llm.provider}/{model.model} x{model.count}"
+        for model in config.llm.models
     )
     print("Loaded game configuration")
     print(f"- provider: {config.llm.provider}")
@@ -80,8 +89,23 @@ def _run_web_dashboard(host: str, port: int) -> None:
     uvicorn.run(create_app(), host=host, port=port)
 
 
+def _print_tournament_progress(payload: dict[str, object]) -> None:
+    if payload["kind"] == "tournament_match":
+        print(
+            f"Match {payload['match']}/{payload['total']} "
+            f"seed={payload['seed']} rotation={payload['rotation']} "
+            f"summary={payload['summary_path']}",
+            flush=True,
+        )
+    elif payload["kind"] in {"phase", "game_end", "provider_retry"}:
+        print(payload, flush=True)
+
+
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
+    if args.web and args.tournament is not None:
+        parser.error("--tournament cannot be combined with --web")
     if args.web:
         _run_web_dashboard(args.host, args.port)
         return
@@ -91,6 +115,22 @@ def main() -> None:
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(f"Configuration error: {exc}") from exc
     _print_config_summary(config)
+    if args.tournament is not None:
+        try:
+            tournament = run_tournament(
+                config,
+                rounds=args.tournament,
+                seed=args.seed if args.seed is not None else 42,
+                max_rounds=args.max_rounds,
+                runner=cast(RunnerType, args.runner),
+                balanced=True,
+                progress_callback=_print_tournament_progress,
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise SystemExit(str(exc)) from exc
+        print(comparison_report(tournament.model_stats))
+        print(f"- summary: {tournament.summary_path}")
+        return
     result = run_match(
         config,
         seed=args.seed,

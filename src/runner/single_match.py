@@ -17,7 +17,7 @@ from src.engine.rules import build_players, check_winner, resolve_night
 from src.engine.vote import resolve_vote
 from src.io.event_log import build_output_dir, state_to_dict, write_events_jsonl, write_summary_json
 from src.metrics.collector import collect_metrics
-from src.providers.openrouter_client import OpenRouterClient, OpenRouterError, load_openrouter_settings
+from src.providers.factory import build_provider_clients
 from src.runner.speech_queue import SpeechQueue
 
 
@@ -79,6 +79,8 @@ def _build_match_state(
     max_rounds: int,
     progress_callback: ProgressCallback | None,
 ) -> tuple[GameState, list[GameEvent], MatchRuntime]:
+    if max_rounds <= 0:
+        raise ValueError("max_rounds must be > 0")
     match_seed = seed if seed is not None else random.SystemRandom().randrange(0, 2**63)
 
     role_counts = {
@@ -94,15 +96,16 @@ def _build_match_state(
     players = build_players(role_counts, model_slots, seed=match_seed)
     state = GameState(turn=1, phase=Phase.SETUP, players=players)
     events: list[GameEvent] = []
-    provider_client = _build_provider_client(config, progress_callback=progress_callback)
-    fallback_models = [model.model for model in config.llm.models]
+    clients = build_provider_clients(
+        config, on_retry=lambda event: _emit_provider_retry(progress_callback, event),
+    )
+    provider_by_name = {model.name: model.provider or config.llm.provider for model in config.llm.models}
     agents = {
         player.id: LLMAgent(
             name=player.name,
             model_id=player.model_id,
             role=player.role,
-            client=provider_client,
-            fallback_models=[mid for mid in fallback_models if mid != player.model_id],
+            client=clients[provider_by_name[player.model_name]],
         )
         for player in players
     }
@@ -985,20 +988,6 @@ def _player_status_snapshot(state: GameState) -> list[dict[str, object]]:
         }
         for player in state.players
     ]
-
-
-def _build_provider_client(
-    config: AppConfig,
-    *,
-    progress_callback: ProgressCallback | None = None,
-) -> OpenRouterClient | None:
-    if config.llm.provider != "openrouter":
-        return None
-    try:
-        settings = load_openrouter_settings()
-    except OpenRouterError:
-        return None
-    return OpenRouterClient(settings, on_retry=lambda event: _emit_provider_retry(progress_callback, event))
 
 
 def _parse_speech_request(request_text: str) -> tuple[bool, str]:

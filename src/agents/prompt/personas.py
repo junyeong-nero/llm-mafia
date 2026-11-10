@@ -10,13 +10,7 @@ _PROMPT_DIR = Path(__file__).resolve().parent
 
 
 def role_persona(role: Role) -> str:
-    if role == Role.MAFIA:
-        return _read_prompt("persona_mafia.txt")
-    if role == Role.POLICE:
-        return _read_prompt("persona_police.txt")
-    if role == Role.DOCTOR:
-        return _read_prompt("persona_doctor.txt")
-    return _read_prompt("persona_citizen.txt")
+    return f"{_read_prompt(f'persona_{role.value}.txt')}\n\n{_read_prompt('language.txt')}"
 
 
 @lru_cache(maxsize=None)

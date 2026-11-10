@@ -1,6 +1,6 @@
 # LLM Mafia
 
-A Mafia game simulator where LLMs deceive and reason against each other. Multiple language models are seated as players through OpenRouter, so you can observe and compare how strategically each model behaves.
+A Mafia game simulator where LLMs deceive and reason against each other **in Korean**. Players can use the official **K-EXAONE 2.5 API** or **OpenRouter** in the same match. Balanced tournaments compare team win rates by model and role without silently substituting another model.
 
 ![Web Dashboard](assets/demo.gif)
 
@@ -47,7 +47,7 @@ A Mafia game simulator where LLMs deceive and reason against each other. Multipl
    └──────────────────────────────────────┘
    ┌──────────────────────────────────────┐
    │            providers/               │
-   │         OpenRouterClient            │  LLM API
+   │    ExaoneClient · OpenRouterClient   │  LLM API
    └──────────────────────────────────────┘
    ┌──────────────────────────────────────┐
    │            metrics/ · io/           │
@@ -173,7 +173,7 @@ Each agent's output is built from three layers.
 
 | Layer | Content |
 |-------|---------|
-| System | Role-specific persona (`persona_mafia.txt`, etc.) |
+| System | Role-specific persona (`persona_mafia.txt`, etc.) + shared Korean policy (`language.txt`) |
 | History | Recent event context (6 day events, 3 night events, role-signal tags) |
 | User | Current action prompt (strategy / speech request / vote, etc.) |
 
@@ -195,14 +195,44 @@ cd llm-mafia
 uv sync
 
 cp .env.sample .env
-# put your OPENROUTER_API_KEY in .env
+# Set EXAONE_API_KEY for the default match.
+# Also set OPENROUTER_API_KEY for config.compare.yaml.
 ```
+
+---
+
+### EXAONE credentials (including Pi / macOS Keychain)
+
+The official endpoint is `https://api.exaone.ai/v1/chat/completions`, with model ID
+`k-exaone_v2.5` ([API reference](https://docs.exaone.ai/en/docs/k-exaone-2.5)).
+Set `EXAONE_API_KEY` in the environment or `.env`.
+
+If Pi already stores your key in the macOS Keychain under `pi-exaone-api-key`, reuse
+it without copying the secret into this repository:
+
+```bash
+export EXAONE_API_KEY_COMMAND='security find-generic-password -s pi-exaone-api-key -w'
+uv run main.py
+```
+
+`*_API_KEY` takes precedence over `*_API_KEY_COMMAND`. The command is explicitly
+opt-in, runs without a shell, and its output is captured rather than logged.
+The app does not read or modify Pi's configuration. Environment variables take
+precedence over `.env`; do not leave placeholder keys in either source.
+
+Both providers use non-streaming chat completions with a 4,096-token output cap
+(including reasoning), a 120-second request timeout, and up to four attempts.
+EXAONE uses `reasoning_effort: low`; OpenRouter uses each model's default reasoning
+settings. Sampling is provider-default, so a game seed fixes roles and engine
+randomness, **not** LLM outputs. Missing credentials, exhausted API retries,
+truncated/empty completions, or unexpected response model IDs stop the match.
+Game agents never fall back to another model or fabricate a response.
 
 ---
 
 ## Configuration
 
-`config.yaml` defines the game rules and model seating.
+`config.yaml` defaults to eight K-EXAONE 2.5 players and defines the game rules and model seating.
 
 ```yaml
 game:
@@ -215,20 +245,23 @@ game:
         citizen: 4
 
 llm:
-    provider: openrouter
+    provider: exaone
     models:
-        - name: nemotron-3-super
-          model: nvidia/nemotron-3-super-120b-a12b:free
-          count: 3          # seat this model as 3 players
-        - name: minimax-m2.5
-          model: minimax/minimax-m2.5:free
-          count: 3
-        - name: step-3.5-flash
-          model: stepfun/step-3.5-flash:free
-          count: 2
+        - name: k-exaone-2.5
+          model: k-exaone_v2.5
+          count: 8
 ```
 
 The sum of `roles` and the sum of `models[*].count` must both equal `player_count`.
+Model names must be unique. Each model can override the default `llm.provider`
+with `provider: exaone` or `provider: openrouter`; see `config.compare.yaml` for a
+mixed-provider example. All natural-language responses are requested in Korean;
+player names and parser tokens (`CHAT:`, `VOTE_JSON:`, `REQUEST:`, `PASS:`, `VOTE:`)
+remain unchanged. Role-inference heuristics recognize Korean words and particles
+such as `Emma는` as well as English input. If a natural-language response has no
+Hangul, the agent asks the **same model** to restate it in Korean once; a second
+violation stops the match. Name-only day votes are exempt. This is a minimal
+language check, not a guarantee against every English word or transliterated name.
 
 ---
 
@@ -252,6 +285,49 @@ uv run main.py
 uv run main.py --runner graph
 uv run main.py --runner legacy --seed 7 --max-rounds 10
 ```
+
+### Balanced model comparison
+
+```bash
+# Requires both EXAONE and OpenRouter credentials.
+uv run main.py --config config.compare.yaml --tournament 3 --seed 42 --max-rounds 5
+# Larger sample: four complete rotation cycles.
+uv run main.py --config config.compare.yaml --tournament 12 --seed 42 --max-rounds 5
+```
+
+The comparison preset seats two players from each model: K-EXAONE 2.5,
+`nvidia/nemotron-3-ultra-550b-a55b:free`, and `nvidia/nemotron-3.5-super-vl:free`.
+The two free models were selected from OpenRouter's
+[Top Weekly, free-price filter](https://openrouter.ai/models?max_price=0&order=top-weekly)
+on **2026-11-10**: #1 Ultra (~3.21T tokens) and #2 Super VL (~2.90T tokens).
+This ranking measures tokens processed in the last seven days, not requests or users.
+The preset pins these IDs rather than silently changing models when rankings change.
+It uses six players (one mafia, one police, one doctor, three citizens) and one
+public speech per player per day. Free model availability and quotas change;
+verify IDs with `GET https://openrouter.ai/api/v1/models`. There is no paid fallback
+and no `openrouter/free` router, which would obscure model identity.
+
+`--tournament N` requires equal model counts and a multiple of the number of
+models. Each block uses the same seed and rotates model groups through the same
+seats, balancing names, speaking positions, and assigned roles; the next block
+increments the seed. Individual game logs are saved under `logs/`; a tournament
+summary under `logs/tournaments/<run>/summary.json` records the config, seeds,
+rotations, completed matches, invalid votes, and model/team/role statistics.
+Completed results are saved after every match. An API failure stops the tournament,
+marks the summary `failed`, and excludes the unfinished match from all scores.
+
+**Scoring and limitations:** a player's win is their team's victory, even if that
+player was eliminated. Win rate is wins / player appearances, including draws in
+the denominator. Police and doctor count as the citizen team. Unplayed roles have
+`win_rate: null`, not zero. Multiple copies of a model can be on opposing teams,
+and appearances within one game are not independent samples. Three matches are
+only a smoke/pilot comparison, not evidence of statistical superiority. Also,
+the existing engine selects police investigation and doctor protection randomly;
+this benchmark measures discussion/voting, not LLM-controlled special abilities.
+Partial rotation cycles after a failure are not balanced and should not be ranked.
+
+See the [2026-11-10 pilot report](docs/comparison-2026-11-10.md) for the three
+completed games, language-compliance observations, and execution interruptions.
 
 ### Web dashboard (HTML + JS)
 
@@ -279,7 +355,8 @@ uv run main.py --web --port 9000
 ```
 llm-mafia/
 ├── main.py                        # CLI entrypoint
-├── config.yaml                    # game and model settings
+├── config.yaml                    # default K-EXAONE 2.5 match
+├── config.compare.yaml            # mixed-provider balanced comparison preset
 ├── DESIGN.md                      # dashboard design system
 │
 ├── src/
@@ -313,11 +390,16 @@ llm-mafia/
 │   │       └── app.js             # SSE subscription and rendering logic
 │   │
 │   ├── providers/
-│   │   ├── openrouter_client.py   # OpenRouter HTTP client
+│   │   ├── chat_client.py         # shared OpenAI-compatible HTTP transport
+│   │   ├── exaone_client.py       # official EXAONE API
+│   │   ├── openrouter_client.py   # OpenRouter API
+│   │   ├── factory.py             # per-model provider routing
+│   │   ├── settings.py            # environment / opt-in key command
 │   │   └── model_registry.py      # config → model slot conversion
 │   │
 │   ├── metrics/
 │   │   ├── collector.py           # game statistics collection
+│   │   ├── comparison.py          # model/team/role win rates
 │   │   └── report.py              # statistics report output
 │   │
 │   └── io/

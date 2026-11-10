@@ -49,8 +49,8 @@ def offline_match(monkeypatch: Any, tmp_path: Path) -> Path:
 
     monkeypatch.setattr("src.runner.single_match.build_output_dir", fake_build_output_dir)
     monkeypatch.setattr(
-        "src.runner.single_match._build_provider_client",
-        lambda config, progress_callback=None: None,
+        "src.runner.single_match.build_provider_clients",
+        lambda config, on_retry=None: {"openrouter": None},
     )
     return _write_config(tmp_path)
 

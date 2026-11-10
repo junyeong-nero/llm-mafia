@@ -82,7 +82,13 @@ def run_graph_match(
             "queue_finished": False,
             "night_consensus_target": None,
             "night_consensus_reason": "",
-        }
+        },
+        # A full match can easily exceed LangGraph's default 25 graph steps.
+        config={
+            "recursion_limit": max_rounds * (
+                2 * config.game.player_count * config.game.day_max_speeches_per_player + 15
+            ) + 3,
+        },
     )
     runtime.latest_night_result = final_state["latest_night_result"]
     _ensure_match_winner(
