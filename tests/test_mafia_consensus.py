@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from src.engine.game_state import GameEvent, GameState, Phase, Player, Role
 from src.engine.rules import resolve_night
-from src.runner.single_match import _parse_mafia_vote_json, _resolve_mafia_consensus_target
+from src.runner.night_phase import _parse_mafia_vote_json, _resolve_mafia_consensus_target
 
 
 def _build_state() -> GameState:
@@ -93,23 +93,21 @@ def test_parse_mafia_vote_json_rejects_non_alive_target() -> None:
 def test_resolve_night_applies_consensus_target_when_provided() -> None:
     state = _build_state()
 
-    killed, mafia_target, doctor_target, police_target = resolve_night(state, seed=7, mafia_target=3)
+    result = resolve_night(state, seed=7, mafia_target=3)
 
-    assert mafia_target == 3
-    assert killed == 3
-    assert doctor_target is None
-    assert police_target is None
+    assert result.mafia_target == 3
+    assert result.killed == 3
+    assert result.investigations == {}
 
 
 def test_resolve_night_falls_back_when_no_consensus_target() -> None:
     state = _build_state()
 
-    killed, mafia_target, doctor_target, police_target = resolve_night(state, seed=7, mafia_target=None)
+    result = resolve_night(state, seed=7, mafia_target=None)
 
-    assert mafia_target in {3, 4}
-    assert killed == mafia_target
-    assert doctor_target is None
-    assert police_target is None
+    assert result.mafia_target in {3, 4}
+    assert result.killed == result.mafia_target
+    assert result.investigations == {}
 
 
 def test_night_vote_tie_randomly_kills_one_of_tied_targets() -> None:
@@ -132,11 +130,10 @@ def test_night_vote_tie_randomly_kills_one_of_tied_targets() -> None:
     ]
 
     selected_target, reason = _resolve_mafia_consensus_target(state, events, seed=11)
-    killed, mafia_target, doctor_target, police_target = resolve_night(state, seed=11, mafia_target=selected_target)
+    result = resolve_night(state, seed=11, mafia_target=selected_target)
 
     assert selected_target in {3, 4}
     assert reason.startswith("tie random")
-    assert mafia_target == selected_target
-    assert killed == selected_target
-    assert doctor_target is None
-    assert police_target is None
+    assert result.mafia_target == selected_target
+    assert result.killed == selected_target
+    assert result.investigations == {}

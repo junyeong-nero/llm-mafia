@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import random
 
 from src.engine.game_state import GameState, Phase, Player, Role
@@ -70,27 +71,44 @@ def check_winner(state: GameState) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class NightResolution:
+    killed: int | None
+    mafia_target: int | None
+    investigations: dict[int, bool]
+
+
 def resolve_night(
     state: GameState,
     *,
     seed: int,
     mafia_target: int | None = None,
-) -> tuple[int | None, int | None, int | None, int | None]:
-    rng = random.Random(seed + state.turn)
-    alive = state.alive_players()
-    alive_non_mafia = [p for p in alive if p.role != Role.MAFIA]
-    if not alive_non_mafia:
-        return None, None, None, None
+    doctor_targets: dict[int, int] | None = None,
+    police_targets: dict[int, int] | None = None,
+) -> NightResolution:
+    alive_by_id = {player.id: player for player in state.alive_players()}
+    doctor_targets = doctor_targets or {}
+    police_targets = police_targets or {}
+    for role, targets in ((Role.DOCTOR, doctor_targets), (Role.POLICE, police_targets)):
+        for actor_id, target_id in targets.items():
+            actor = alive_by_id.get(actor_id)
+            if actor is None or actor.role != role:
+                raise ValueError(f"{role.value} action requires an alive {role.value}")
+            if target_id not in alive_by_id or (role == Role.POLICE and actor_id == target_id):
+                raise ValueError(f"invalid {role.value} target: {target_id}")
 
-    alive_non_mafia_ids = {player.id for player in alive_non_mafia}
-    selected_mafia_target = mafia_target if mafia_target in alive_non_mafia_ids else rng.choice(alive_non_mafia).id
-    doctor_players = state.alive_by_role(Role.DOCTOR)
-    doctor_target = rng.choice(alive).id if doctor_players else None
-    police_players = state.alive_by_role(Role.POLICE)
-    police_target = rng.choice(alive).id if police_players else None
-
-    killed = None if doctor_target == selected_mafia_target else selected_mafia_target
-    return killed, selected_mafia_target, doctor_target, police_target
+    # All actions take effect from the same pre-elimination state.
+    investigations = {
+        police_id: alive_by_id[target_id].role == Role.MAFIA
+        for police_id, target_id in police_targets.items()
+    }
+    candidates = [player.id for player in alive_by_id.values() if player.role != Role.MAFIA]
+    if not candidates or not state.alive_by_role(Role.MAFIA):
+        return NightResolution(killed=None, mafia_target=None, investigations=investigations)
+    # Preserve the existing mafia no-consensus fallback; never invent doctor/police actions.
+    selected_target = mafia_target if mafia_target in candidates else random.Random(seed + state.turn).choice(candidates)
+    killed = None if selected_target in doctor_targets.values() else selected_target
+    return NightResolution(killed=killed, mafia_target=selected_target, investigations=investigations)
 
 
 def phase_label(phase: Phase) -> str:

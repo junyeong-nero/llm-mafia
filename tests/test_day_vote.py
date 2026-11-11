@@ -26,7 +26,7 @@ def test_build_self_speech_context_includes_only_own_day_statements() -> None:
 
     context = _build_self_speech_context(events, voter)
 
-    assert "I suspect Ava." in context
+    assert "I suspect Ava." not in context
     assert "Ava changed stories." in context
     assert "I trust Ava." not in context
     assert "hidden" not in context
@@ -52,7 +52,7 @@ def test_parse_day_vote_rejects_self_vote() -> None:
     assert error == "target is not an alive non-self player"
 
 
-def test_build_day_vote_prompt_includes_role_belief_context() -> None:
+def test_build_day_vote_prompt_distinguishes_claims_from_confirmed_role_knowledge() -> None:
     agent = LLMAgent(name="Liam", model_id="m", role=Role.CITIZEN)
     alive_player_names = ["Liam", "Emma", "Ava"]
     visible_history = [
@@ -64,15 +64,16 @@ def test_build_day_vote_prompt_includes_role_belief_context() -> None:
 
     prompt = agent.build_day_vote_prompt(
         self_speech_context=agent.build_own_dialogue_context(),
-        belief_context=agent.build_belief_context(alive_player_names=alive_player_names),
+        role_knowledge_context=agent.build_role_knowledge_context(alive_player_names=alive_player_names),
         naming_instruction="Use only these player names when referring to others: Liam, Emma, Ava.",
     )
 
-    assert "Role inferences (visible only):" in prompt
-    assert "Ava | M:" in prompt
+    assert "전체 공개 발언·투표·밤 결과 기록" in prompt
+    assert "Ava: 미확인" in prompt
+    assert "과거 의심도 확정 사실이 아닙니다" in prompt
     assert "VOTE: <exact alive player name>" in prompt
-    assert "You are Liam. Use first person (I/me/my). Do not refer to yourself as Liam." in prompt
-    assert "{belief_context}" not in prompt
+    assert "당신은 Liam입니다" in prompt
+    assert "{role_knowledge_context}" not in prompt
 
 
 def test_resolve_vote_returns_top_candidate_when_unique() -> None:

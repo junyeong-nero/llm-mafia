@@ -34,6 +34,7 @@ def write_events_jsonl(events: list[GameEvent], output_dir: Path) -> Path:
                 "speaker": event.speaker,
                 "kind": event.kind,
                 "content": event.content,
+                "private_to": event.private_to,
             }
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     return path

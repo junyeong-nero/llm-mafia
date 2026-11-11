@@ -7,13 +7,17 @@ from langgraph.graph import END, START, StateGraph
 
 from src.config import AppConfig
 from src.engine.game_state import GameEvent, GameState, Phase
+from src.runner.night_phase import (
+    _append_mafia_consensus_event,
+    _append_night_phase_talk,
+    _apply_night_resolution,
+    _resolve_mafia_consensus_target,
+)
 from src.runner.single_match import (
     MatchResult,
     MatchRuntime,
     ProgressCallback,
     _advance_match_phase,
-    _append_mafia_consensus_event,
-    _append_night_phase_talk,
     _build_match_state,
     _collect_day_followups,
     _collect_day_strategies_and_initial_requests,
@@ -23,11 +27,9 @@ from src.runner.single_match import (
     _finalize_match,
     _refresh_day_memory,
     _record_setup,
-    _resolve_mafia_consensus_target,
     _resolve_vote_result,
     _run_next_day_speech,
     _set_winner_if_needed,
-    _apply_night_resolution,
 )
 from src.runner.speech_queue import SpeechQueue
 
@@ -198,6 +200,7 @@ def _night_resolution_node(graph_runtime: GraphRuntime):
         state["latest_night_result"] = _apply_night_resolution(
             state["game_state"],
             state["events"],
+            agents=runtime.agents,
             seed=runtime.match_seed,
             mafia_target=state["night_consensus_target"],
             progress_callback=runtime.progress_callback,

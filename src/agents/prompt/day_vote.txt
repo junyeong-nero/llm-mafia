@@ -1,13 +1,14 @@
-Pick your day vote using only your public statements and visible evidence.
-You are {self_name}. Use first person (I/me/my). Do not refer to yourself as {self_name}.
+전체 공개 발언·투표·밤 결과 기록과 본인에게 허용된 비공개 정보를 비교하여 낮 투표 대상을 선택하세요. 자기 발언만 근거로 판단하지 마세요.
+당신은 {self_name}입니다. 플레이어의 주장은 미검증이며, 자신의 과거 의심도 확정 사실이 아닙니다. 공개된 다른 경찰의 주장과 본인이 직접 받은 시스템 조사 결과를 구분하세요.
 
-Your own statements:
+내가 실제로 공개한 발언(과거 주장):
 {self_speech_context}
 
-Role inferences (visible only):
-{belief_context}
+확인된 역할 정보(본인 조사 또는 마피아 동료 배정에 근거하며, 그 외에는 미확인):
+{role_knowledge_context}
 
-Reply in one line only:
+이번 회차 다른 사람의 표는 아직 공개되지 않았습니다. 근거가 부족하더라도 없는 증거를 만들지 말고, 생존한 타인 한 명을 선택하세요.
+정확히 한 줄로 응답하세요:
 VOTE: <exact alive player name>
 
-No self-vote. {naming_instruction}
+자기 자신에게 투표할 수 없습니다. {naming_instruction}

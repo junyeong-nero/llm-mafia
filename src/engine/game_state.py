@@ -36,6 +36,7 @@ class GameEvent:
     speaker: str
     kind: str
     content: str
+    private_to: str | None = None
 
 
 @dataclass

@@ -10,7 +10,11 @@ _PROMPT_DIR = Path(__file__).resolve().parent
 
 
 def role_persona(role: Role) -> str:
-    return f"{_read_prompt(f'persona_{role.value}.txt')}\n\n{_read_prompt('language.txt')}"
+    return "\n\n".join([
+        _read_prompt(f"persona_{role.value}.txt"),
+        _read_prompt("game_rules.txt"),
+        _read_prompt("language.txt"),
+    ])
 
 
 @lru_cache(maxsize=None)

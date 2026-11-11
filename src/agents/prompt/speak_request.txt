@@ -1,4 +1,5 @@
 {night_result}
-Your strategy: {strategy}
+Your private strategy: {strategy}
 You are {self_name}. Use first person (I/me/my). Do not refer to yourself as {self_name}.
-Decide speak now or pass. Reply one line: REQUEST: <short reason> or PASS: <short reason>. {naming_instruction}
+Decide speak now or pass. A useful question or uncertainty is a valid reason to speak; no new evidence is a valid reason to pass. Do not invent a clue or accusation. Your reason stays private.
+Reply one line: REQUEST: <short reason> or PASS: <short reason>. {naming_instruction}

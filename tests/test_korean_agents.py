@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from src.agents.llm_agent import LLMAgent, _mentions_name
+from src.agents.llm_agent import LLMAgent, _history_to_context
 from src.engine.game_state import GameEvent, Phase, Role
 from src.providers.chat_client import ProviderError
 
@@ -57,10 +57,15 @@ def test_persistent_non_korean_output_stops_the_match() -> None:
     assert len(client.calls) == 2
 
 
-def test_vote_protocol_does_not_require_hangul() -> None:
-    client = RecordingClient(text="VOTE: Emma")
+@pytest.mark.parametrize("phase, text", [
+    ("vote", "VOTE: Emma"),
+    ("investigate", "INVESTIGATE: Emma"),
+    ("protect", "PROTECT: Alex"),
+])
+def test_target_selection_protocols_do_not_require_hangul(phase: str, text: str) -> None:
+    client = RecordingClient(text=text)
     agent = LLMAgent(name="Alex", model_id="test/model", role=Role.CITIZEN, client=client)
-    assert agent.speak(phase="vote", turn=1, prompt="Vote") == "VOTE: Emma"
+    assert agent.speak(phase=phase, turn=1, prompt="Choose a target") == text
     assert len(client.calls) == 1
 
 
@@ -85,20 +90,14 @@ def test_agent_rejects_switched_model_or_empty_response(model: str | None, text:
         agent.speak(phase="day", turn=1, prompt="발언")
 
 
-@pytest.mark.parametrize("content, tag, score", [
-    ("Emma는 거짓말을 하므로 의심합니다.", "sus", "mafia"),
-    ("Emma를 보호하고 치료하겠습니다.", "protect", "doctor"),
-    ("Emma의 말이 일관되어 신뢰합니다.", "trust", "citizen"),
+@pytest.mark.parametrize("content", [
+    "Emma는 거짓말을 하므로 의심합니다.",
+    "Emma를 보호하고 치료하겠습니다.",
+    "Emma의 말이 일관되어 신뢰합니다.",
 ])
-def test_korean_role_inference_handles_name_particles(content: str, tag: str, score: str) -> None:
+def test_korean_claims_are_preserved_without_computed_role_scores(content: str) -> None:
     agent = LLMAgent(name="Alex", model_id="m", role=Role.CITIZEN)
-    agent.refresh_memory(
-        turn=1,
-        visible_history=[GameEvent(turn=1, phase=Phase.DAY, speaker="Noah", kind="speech", content=content)],
-        alive_player_names=["Alex", "Emma", "Noah"],
-    )
-    belief = agent.role_beliefs_by_name["Emma"]
-    assert tag in belief.evidence
-    assert getattr(belief, score) > 0.34
-    assert not _mentions_name("Emma2는", "Emma")
-    assert not _mentions_name("xEmma는", "Emma")
+    history = [GameEvent(turn=1, phase=Phase.DAY, speaker="Noah", kind="speech", content=content)]
+    agent.refresh_memory(turn=1, visible_history=history, alive_player_names=["Alex", "Emma", "Noah"])
+    assert content in _history_to_context(history)
+    assert agent.known_mafia_by_name == {}

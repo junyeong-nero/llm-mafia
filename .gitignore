@@ -12,3 +12,4 @@ wheels/
 # Generated artifacts
 logs/
 .pytest_cache/
+gif/

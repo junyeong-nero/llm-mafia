@@ -1,6 +1,6 @@
 # LLM Mafia
 
-A Mafia game simulator where LLMs deceive and reason against each other **in Korean**. Players can use the official **K-EXAONE 2.5 API** or **OpenRouter** in the same match. Balanced tournaments compare team win rates by model and role without silently substituting another model.
+A Mafia game simulator where LLMs lie, bluff, and try to outsmart each other — **all in Korean**. Players can mix the official **K-EXAONE 2.5 API** with **OpenRouter** models in the same match, and tournaments compare win rates by model and role without quietly swapping one model for another.
 
 ![Web Dashboard](assets/demo.gif)
 
@@ -22,217 +22,81 @@ A Mafia game simulator where LLMs deceive and reason against each other **in Kor
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                        main.py                          │
-│     CLI entrypoint · runner selection · web dashboard   │
-└────────────────────────┬────────────────────────────────┘
-                         │
-          ┌──────────────┴──────────────┐
-          │        match_runner         │  runner dispatcher
-          └──────────┬──────────────────┘
-          ┌──────────┴──────────┐
-          │                     │
-   graph_runner          single_match          ← runner implementations
-   (LangGraph-based)     (legacy loop)
-          │
-          │ from each node
-          │
-   ┌──────┴────────────────────────────────┐
-   │              engine/                  │
-   │  game_state  · phase · rules · vote   │  game rules & state
-   └──────────────────────────────────────┘
-   ┌──────────────────────────────────────┐
-   │              agents/                 │
-   │  LLMAgent · RoleBelief · Prompt      │  LLM players
-   └──────────────────────────────────────┘
-   ┌──────────────────────────────────────┐
-   │            providers/               │
-   │    ExaoneClient · OpenRouterClient   │  LLM API
-   └──────────────────────────────────────┘
-   ┌──────────────────────────────────────┐
-   │            metrics/ · io/           │
-   │     event logs · stats collection    │
-   └──────────────────────────────────────┘
+main.py (CLI / web dashboard)
+  → match_runner          picks a runner
+      ├── graph_runner    LangGraph-based (default)
+      └── single_match    legacy loop
+            → engine/     game rules & state
+            → agents/     LLM players
+            → providers/  EXAONE / OpenRouter APIs
+            → metrics/, io/   logs & stats
 ```
-
-**Default execution flow**: `main.py` → `match_runner` → `graph_runner` (default) or `single_match` (legacy) → each node calls `engine` and `agents` → results are recorded via `metrics` and `io`.
 
 ---
 
 ## Game Flow
 
-A match repeats the following phases until a win condition is met.
+A match repeats these phases until one side wins:
 
 ```
-SETUP
-  │  seat players, assign roles at random
-  ▼
-NIGHT  ──────────────────────────────────────────────────────┐
-  │  mafia-only chat → consensus vote → choose elimination    │
-  │  police: investigate / doctor: protect (internal)         │
-  ▼                                                          │
-DAY    ──────────────────────────────────────────────────────┤
-  │  plan strategy → SpeechQueue-based discussion (see below) │
-  ▼                                                          │
-VOTE                                                         │
-  │  every player votes → majority elimination → win check    │
-  └──────────────────── repeat unless game over ─────────────┘
+SETUP → NIGHT → DAY → VOTE → (repeat)
 ```
 
-### SpeechQueue — Day Discussion Mechanism
+- **Night** — mafia chat privately and vote on a target. The police and doctor each pick their own target through the LLM (`INVESTIGATE: <name>` / `PROTECT: <name>`). Investigating shows only *mafia or not* — never the exact non-mafia role. Self-protection and consecutive protection are allowed.
+- **Day** — players don't just take turns. A **SpeechQueue** decides the order, so players can request to speak and respond to earlier speeches like a real debate, until everyone who wanted to talk has talked.
+- **Vote** — simultaneous ballots, plurality elimination, then a win check.
 
-During the day, players do not all speak at once. A speech-request queue decides the order, so new speeches follow up on earlier ones like a real debate.
-
-```
-[plan strategy] ──→ [initial speech requests]
-                     │
-           ┌─────────┴──────────┐
-           │ REQUEST            │ PASS
-      enqueue               queue empty?
-           │                    │
-           └─────────┬──────────┘
-                 queue empty?
-                  │         │
-                  no        yes
-                  │         │
-         [next speaker talks]  [go to vote]
-                  │
-         [follow-up requests from other players]
-                  │
-           ┌──────┴──────┐
-           │ REQUEST     │ PASS
-        enqueue      speakers left?
-           │             │
-           └──────┬──────┘
-                  └──→ [queue empty?] ──yes──→ [go to vote]
-                              │
-                              no
-                              │
-                     [next speaker talks]
-```
-
-### LangGraph Node Structure
-
-`graph_runner` implements the flow above as nodes and edges in a LangGraph `StateGraph`.
-
-```
-START
-  └─→ setup_match
-        └─→ advance_phase ─┬─→ night_private_chat
-                           │       └─→ night_consensus
-                           │             └─→ night_resolution
-                           │                   └─→ check_winner
-                           │
-                           ├─→ day_prepare_memory
-                           │       └─→ day_collect_initial_requests
-                           │               ├─→ day_run_next_speech ←┐
-                           │               │       └─→ day_collect_followups ─┘
-                           │               └─→ advance_phase (when queue is drained)
-                           │
-                           ├─→ vote_collect_ballots
-                           │       └─→ vote_resolve
-                           │             └─→ check_winner
-                           │
-                           └─→ finalize_state ──→ END
-```
-
-If `check_winner` finds a winner, the graph moves to `finalize_state`; otherwise it returns to `advance_phase` and starts the next round.
+If an LLM outputs a garbled special action, the action is skipped and logged privately (`night_action_invalid`) — never replaced with a random pick.
 
 ---
 
 ## Agent Internals
 
-Each player is an `LLMAgent` instance. Beyond calling an LLM, it keeps its own memory and inference system.
+Each player is an `LLMAgent` with its own memory of public dialogue and its own confirmed role knowledge. Anything unconfirmed is left to the LLM to reason about — there's no keyword-scoring formula pretending to be deduction.
 
-### RoleBelief — Role Inference
+The key design rule: **separate facts from claims.**
 
-Agents analyze game events and track the probability that each other player is mafia, doctor, or citizen.
+- The police player's investigation results are facts. Everything else — accusations, denials, "I'm the police!" — stays a claim, kept in the original wording so the model can spot contradictions itself.
+- Private info (night choices, investigation results, personal strategies) is visible only to its owner. Mafia players can't peek at police or doctor secrets.
+- Voting uses a frozen snapshot of history: you see everyone's past public votes and statements, but never this round's other ballots.
+- Full event history is provided without truncation. It costs more tokens, but no evidence is dropped at decision time.
 
-```
-visible_history (event log)
-        │
-        ├─ day events ──→ _apply_day_inference
-        │    · vote records       (+0.14 mafia)
-        │    · suspicious speech  (+0.20 mafia)
-        │    · trusting speech    (+0.15 citizen)
-        │    · protective speech  (+0.14 doctor)
-        │
-        └─ night events ──→ _apply_night_inference
-             · mafia vote         (+0.18 mafia)
-             · consensus target   (+0.10 mafia)
-                    │
-                    ▼
-           RoleBelief { mafia: 0.xx, doctor: 0.xx, citizen: 0.xx, evidence: [...] }
-```
-
-These probabilities are injected into the LLM prompt through `build_belief_context()` when the agent decides how to vote.
-
-### Prompt Composition
-
-Each agent's output is built from three layers.
-
-| Layer | Content |
-|-------|---------|
-| System | Role-specific persona (`persona_mafia.txt`, etc.) + shared Korean policy (`language.txt`) |
-| History | Recent event context (6 day events, 3 night events, role-signal tags) |
-| User | Current action prompt (strategy / speech request / vote, etc.) |
+Prompts are built from three layers: a system prompt (role persona + rules + Korean language policy), the player-visible event history, and the current action prompt. Mafia are allowed to deceive; citizens are told to separate recorded facts from claims.
 
 ---
 
 ## Getting Started
 
-### Requirements
-
-- Python 3.13+
-- [uv](https://github.com/astral-sh/uv) (package management)
-
-### Installation
+**Requirements:** Python 3.13+ and [uv](https://github.com/astral-sh/uv).
 
 ```bash
 git clone https://github.com/your-username/llm-mafia.git
 cd llm-mafia
 
 uv sync
-
 cp .env.sample .env
-# Set EXAONE_API_KEY for the default match.
-# Also set OPENROUTER_API_KEY for config.compare.yaml.
 ```
 
----
+Set `EXAONE_API_KEY` in `.env` for the default match, and `OPENROUTER_API_KEY` too if you want the comparison preset.
 
-### EXAONE credentials (including Pi / macOS Keychain)
+### EXAONE credentials (Pi / macOS Keychain)
 
-The official endpoint is `https://api.exaone.ai/v1/chat/completions`, with model ID
-`k-exaone_v2.5` ([API reference](https://docs.exaone.ai/en/docs/k-exaone-2.5)).
-Set `EXAONE_API_KEY` in the environment or `.env`.
-
-If Pi already stores your key in the macOS Keychain under `pi-exaone-api-key`, reuse
-it without copying the secret into this repository:
+If Pi already stored your key in the macOS Keychain under `pi-exaone-api-key`, you can reuse it without copying the secret into this repo:
 
 ```bash
 export EXAONE_API_KEY_COMMAND='security find-generic-password -s pi-exaone-api-key -w'
 uv run main.py
 ```
 
-`*_API_KEY` takes precedence over `*_API_KEY_COMMAND`. The command is explicitly
-opt-in, runs without a shell, and its output is captured rather than logged.
-The app does not read or modify Pi's configuration. Environment variables take
-precedence over `.env`; do not leave placeholder keys in either source.
+`EXAONE_API_KEY` (if set directly) takes precedence over the command. The command is opt-in, runs without a shell, and its output is captured but never logged.
 
-Both providers use non-streaming chat completions with a 4,096-token output cap
-(including reasoning), a 120-second request timeout, and up to four attempts.
-EXAONE uses `reasoning_effort: low`; OpenRouter uses each model's default reasoning
-settings. Sampling is provider-default, so a game seed fixes roles and engine
-randomness, **not** LLM outputs. Missing credentials, exhausted API retries,
-truncated/empty completions, or unexpected response model IDs stop the match.
-Game agents never fall back to another model or fabricate a response.
+Both providers use non-streaming chat completions, a 4,096-token output cap, a 120-second timeout, and up to four retry attempts. Sampling is provider-default, so a seed fixes roles and engine randomness — **not** LLM outputs. Missing credentials or a broken API response stops the match; agents never silently fall back to another model.
 
 ---
 
 ## Configuration
 
-`config.yaml` defaults to eight K-EXAONE 2.5 players and defines the game rules and model seating.
+`config.yaml` defaults to eight K-EXAONE 2.5 players:
 
 ```yaml
 game:
@@ -252,16 +116,9 @@ llm:
           count: 8
 ```
 
-The sum of `roles` and the sum of `models[*].count` must both equal `player_count`.
-Model names must be unique. Each model can override the default `llm.provider`
-with `provider: exaone` or `provider: openrouter`; see `config.compare.yaml` for a
-mixed-provider example. All natural-language responses are requested in Korean;
-player names and parser tokens (`CHAT:`, `VOTE_JSON:`, `REQUEST:`, `PASS:`, `VOTE:`)
-remain unchanged. Role-inference heuristics recognize Korean words and particles
-such as `Emma는` as well as English input. If a natural-language response has no
-Hangul, the agent asks the **same model** to restate it in Korean once; a second
-violation stops the match. Name-only day votes are exempt. This is a minimal
-language check, not a guarantee against every English word or transliterated name.
+The `roles` sum and the `models[*].count` sum must both equal `player_count`, and model names must be unique. Each model can override the default provider with `provider: exaone` or `provider: openrouter` — see `config.compare.yaml` for a mixed example.
+
+All responses are requested in Korean. If a natural-language reply has no Hangul, the same model is asked once to restate it in Korean; a second violation stops the match. (Name-only votes and special actions are exempt.)
 
 ---
 
@@ -281,8 +138,6 @@ uv run main.py
 | `--config <path>` | `config.yaml` | Config file path |
 
 ```bash
-# examples
-uv run main.py --runner graph
 uv run main.py --runner legacy --seed 7 --max-rounds 10
 ```
 
@@ -291,62 +146,29 @@ uv run main.py --runner legacy --seed 7 --max-rounds 10
 ```bash
 # Requires both EXAONE and OpenRouter credentials.
 uv run main.py --config config.compare.yaml --tournament 3 --seed 42 --max-rounds 5
-# Larger sample: four complete rotation cycles.
-uv run main.py --config config.compare.yaml --tournament 12 --seed 42 --max-rounds 5
 ```
 
-The comparison preset seats two players from each model: K-EXAONE 2.5,
-`nvidia/nemotron-3-ultra-550b-a55b:free`, and `nvidia/nemotron-3.5-super-vl:free`.
-The two free models were selected from OpenRouter's
-[Top Weekly, free-price filter](https://openrouter.ai/models?max_price=0&order=top-weekly)
-on **2026-11-10**: #1 Ultra (~3.21T tokens) and #2 Super VL (~2.90T tokens).
-This ranking measures tokens processed in the last seven days, not requests or users.
-The preset pins these IDs rather than silently changing models when rankings change.
-It uses six players (one mafia, one police, one doctor, three citizens) and one
-public speech per player per day. Free model availability and quotas change;
-verify IDs with `GET https://openrouter.ai/api/v1/models`. There is no paid fallback
-and no `openrouter/free` router, which would obscure model identity.
+The comparison preset seats two players each from K-EXAONE 2.5 and two free OpenRouter models (`nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-super-vl:free`, picked from OpenRouter's weekly free top ranking on 2026-11-10). With `--tournament N`, model groups rotate through the same seats so names, speaking order, and roles are balanced; the seed advances per block.
 
-`--tournament N` requires equal model counts and a multiple of the number of
-models. Each block uses the same seed and rotates model groups through the same
-seats, balancing names, speaking positions, and assigned roles; the next block
-increments the seed. Individual game logs are saved under `logs/`; a tournament
-summary under `logs/tournaments/<run>/summary.json` records the config, seeds,
-rotations, completed matches, invalid votes, and model/team/role statistics.
-Completed results are saved after every match. An API failure stops the tournament,
-marks the summary `failed`, and excludes the unfinished match from all scores.
+Results go to `logs/`, with a tournament summary at `logs/tournaments/<run>/summary.json`. An API failure stops the tournament and excludes the unfinished match from scores.
 
-**Scoring and limitations:** a player's win is their team's victory, even if that
-player was eliminated. Win rate is wins / player appearances, including draws in
-the denominator. Police and doctor count as the citizen team. Unplayed roles have
-`win_rate: null`, not zero. Multiple copies of a model can be on opposing teams,
-and appearances within one game are not independent samples. Three matches are
-only a smoke/pilot comparison, not evidence of statistical superiority. Also,
-the existing engine selects police investigation and doctor protection randomly;
-this benchmark measures discussion/voting, not LLM-controlled special abilities.
-Partial rotation cycles after a failure are not balanced and should not be ranked.
+**Reading the numbers:** a player's win counts as their team's victory, and win rate is wins ÷ appearances. Police and doctor count as the citizen team. Keep in mind that a few matches are a smoke test, not proof of superiority — appearances within one game aren't independent samples, and partial rotations after a failure aren't balanced.
 
-See the [2026-11-10 pilot report](docs/comparison-2026-11-10.md) for the three
-completed games, language-compliance observations, and execution interruptions.
+The [2026-11-10 pilot report](docs/comparison-2026-11-10.md) is **historical**: it predates the private night-action and voting-context fixes, so its win rates don't reflect the current engine. A [post-fix rerun](docs/comparison-2026-11-10-postfix.md) completed only 1 of 3 matches (EXAONE's daily 100-call limit), so its partial numbers also shouldn't be ranked.
 
-### Web dashboard (HTML + JS)
+### Web dashboard
 
-Visualizes the match in real time. The browser connects to a FastAPI server over SSE (Server-Sent Events) and streams speeches, votes, and results as they happen. The UI follows [`DESIGN.md`](DESIGN.md) and uses inline SVG icons.
+Watch the match live in your browser — speeches, votes, and results stream over SSE. The UI follows [`DESIGN.md`](DESIGN.md) and uses inline SVG icons.
 
 ```bash
-uv run main.py --web
+uv run main.py --web --port 9000
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--web` | off | Launch the web dashboard (instead of a CLI match) |
+| `--web` | off | Launch the web dashboard instead of a CLI match |
 | `--host <str>` | `127.0.0.1` | Dashboard bind host |
 | `--port <int>` | `8000` | Dashboard port |
-
-```bash
-# example
-uv run main.py --web --port 9000
-```
 
 ---
 
@@ -356,74 +178,31 @@ uv run main.py --web --port 9000
 llm-mafia/
 ├── main.py                        # CLI entrypoint
 ├── config.yaml                    # default K-EXAONE 2.5 match
-├── config.compare.yaml            # mixed-provider balanced comparison preset
+├── config.compare.yaml            # mixed-provider comparison preset
 ├── DESIGN.md                      # dashboard design system
 │
 ├── src/
-│   ├── agents/
-│   │   ├── llm_agent.py           # LLMAgent, RoleBelief, role inference logic
-│   │   └── prompt/
-│   │       ├── personas.py        # role-specific system prompt loader
-│   │       └── *.txt              # persona / action prompt templates
-│   │
-│   ├── engine/
-│   │   ├── game_state.py          # immutable data models (Player, GameState, GameEvent)
-│   │   ├── phase.py               # phase transition logic
-│   │   ├── rules.py               # seating, win conditions, night resolution
-│   │   └── vote.py                # day vote tally
-│   │
-│   ├── runner/
-│   │   ├── match_runner.py        # graph/legacy runner dispatcher
-│   │   ├── graph_runner.py        # LangGraph-based runner (default)
-│   │   ├── single_match.py        # legacy loop runner + shared helpers
-│   │   ├── speech_queue.py        # SpeechQueue (day discussion ordering)
-│   │   └── tournament.py          # multi-match tournament orchestration
-│   │
-│   ├── web/
-│   │   ├── server.py              # FastAPI app (static serving + REST/SSE API)
-│   │   ├── match_session.py       # background match session + SSE event hub
-│   │   ├── view_model.py          # progress payload → view state logic
-│   │   └── static/
-│   │       ├── index.html         # dashboard HTML
-│   │       ├── style.css          # dashboard styles (based on DESIGN.md)
-│   │       ├── icons.js           # inline SVG icons (Lucide, no emoji)
-│   │       └── app.js             # SSE subscription and rendering logic
-│   │
-│   ├── providers/
-│   │   ├── chat_client.py         # shared OpenAI-compatible HTTP transport
-│   │   ├── exaone_client.py       # official EXAONE API
-│   │   ├── openrouter_client.py   # OpenRouter API
-│   │   ├── factory.py             # per-model provider routing
-│   │   ├── settings.py            # environment / opt-in key command
-│   │   └── model_registry.py      # config → model slot conversion
-│   │
-│   ├── metrics/
-│   │   ├── collector.py           # game statistics collection
-│   │   ├── comparison.py          # model/team/role win rates
-│   │   └── report.py              # statistics report output
-│   │
-│   └── io/
-│       ├── event_log.py           # JSONL event log / summary JSON writer
-│       └── config.py              # config file loader
+│   ├── agents/                    # LLMAgent, personas, prompt templates
+│   ├── engine/                    # game state, phases, rules, visibility, votes
+│   ├── runner/                    # graph/legacy runners, night phase, speech queue, tournament
+│   ├── web/                       # FastAPI server, SSE session, dashboard static files
+│   ├── providers/                 # EXAONE / OpenRouter clients, factory, settings
+│   ├── metrics/                   # stats collection, win rates, reports
+│   └── io/                        # JSONL event logs, config loader
 │
-├── docs/
-│   └── rule.md                    # detailed game rules
-└── tests/                         # pytest test suite
+├── docs/rule.md                   # detailed game rules
+└── tests/                         # pytest suite
 ```
 
 ---
 
 ## Development
 
-### Running tests
-
 ```bash
 uv run pytest -q
 ```
 
-### Comparing the two runners
-
-The `graph` and `legacy` runners share the same helper functions (`single_match.py`). Run both with the same seed to compare results.
+The `graph` and `legacy` runners share the same day/vote and night helpers, and tests verify they produce identical results. To see it yourself:
 
 ```bash
 uv run main.py --runner graph  --seed 42

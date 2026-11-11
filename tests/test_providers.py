@@ -10,6 +10,7 @@ import requests
 import yaml
 
 from src.config import load_config
+from src.engine.game_state import Role
 from src.providers.chat_client import ChatSettings, ProviderError
 from src.providers.exaone_client import ExaoneClient, load_exaone_settings
 from src.providers.factory import build_provider_clients
@@ -137,6 +138,20 @@ def test_mixed_match_routes_each_player_to_its_provider(monkeypatch: Any, clean_
         expected = ExaoneClient if player.model_id == "k-exaone_v2.5" else OpenRouterClient
         assert isinstance(agent.client, expected)
         assert agent.model_id == player.model_id
+
+
+def test_only_mafia_agents_receive_teammate_assignments(monkeypatch: Any, clean_credentials: None) -> None:
+    monkeypatch.setenv("EXAONE_API_KEY", "exaone-test")
+    config = load_config(Path("config.yaml"))
+    state, _, runtime = _build_match_state(config, seed=42, max_rounds=3, progress_callback=None)
+    mafia_names = {player.name for player in state.players if player.role == Role.MAFIA}
+    assert len(mafia_names) == 2
+    for player in state.players:
+        teammates = runtime.agents[player.id].mafia_teammates
+        if player.role == Role.MAFIA:
+            assert set(teammates) == mafia_names - {player.name}
+        else:
+            assert teammates == ()
 
 
 @pytest.mark.parametrize("change, error", [

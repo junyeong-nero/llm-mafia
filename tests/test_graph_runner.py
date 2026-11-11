@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 from itertools import count
+import json
 from pathlib import Path
 from typing import Any
 
 from src.config import AppConfig, GameConfig, LLMConfig, ModelConfig, RoleConfig
-from src.engine.game_state import Phase
+from src.engine.game_state import Phase, Role
 from src.runner.graph_runner import run_graph_match
 from src.runner.match_runner import run_match
 from src.runner.single_match import run_single_match
@@ -44,9 +45,9 @@ def _stub_output_dirs(monkeypatch: Any, tmp_path: Path) -> None:
     )
 
 
-def _event_signature(result: Any) -> list[tuple[int, object, str, str, str]]:
+def _event_signature(result: Any) -> list[tuple[int, object, str, str, str, str | None]]:
     return [
-        (event.turn, event.phase, event.speaker, event.kind, event.content)
+        (event.turn, event.phase, event.speaker, event.kind, event.content, event.private_to)
         for event in result.events
     ]
 
@@ -148,6 +149,43 @@ def test_graph_runner_supports_more_than_25_steps(monkeypatch: Any, tmp_path: Pa
     assert graph.state.winner == "draw"
     assert graph.metrics["night_resolutions"] == 3
     assert _event_signature(graph) == _event_signature(legacy)
+
+
+def test_both_runners_execute_private_night_actions_before_public_day(monkeypatch: Any, tmp_path: Path) -> None:
+    _stub_output_dirs(monkeypatch, tmp_path)
+    config = _build_config()
+    config = replace(
+        config,
+        game=GameConfig(player_count=6, roles=RoleConfig(mafia=1, police=1, doctor=1, citizen=3), day_max_speeches_per_player=1),
+        llm=replace(config.llm, models=[replace(model, count=3) for model in config.llm.models]),
+    )
+    calls: list[tuple[str, str]] = []
+
+    def scripted_speak(self: Any, *, phase: str, **kwargs: Any) -> str:
+        calls.append((self.name, phase))
+        if phase == "investigate":
+            return "INVESTIGATE: Liam"
+        if phase == "protect":
+            return "PROTECT: Emma"
+        if phase == "night":
+            return 'CHAT: 근거가 없어 탐색적으로 고릅니다.\nVOTE_JSON: {"target": "Emma"}'
+        if phase == "vote":
+            return "VOTE: Alex" if self.role == Role.MAFIA else "VOTE: Liam"
+        return "PASS: 아직 공개된 근거가 부족합니다."
+
+    monkeypatch.setattr("src.agents.llm_agent.LLMAgent.speak", scripted_speak)
+    legacy = run_single_match(config, seed=42, max_rounds=3)
+    graph = run_graph_match(config, seed=42, max_rounds=3)
+    assert _event_signature(graph) == _event_signature(legacy)
+    assert graph.state.winner == "citizen"
+    assert calls.count(("Emma", "investigate")) == 2
+    assert calls.count(("Noah", "protect")) == 2
+    night_result = next(event for event in graph.events if event.kind == "night_result")
+    assert night_result.content == "Night result: no one was eliminated."
+    saved = [json.loads(line) for line in graph.events_path.read_text().splitlines()]
+    result = next(event for event in saved if event["kind"] == "investigation_result")
+    assert result["private_to"] == "Emma"
+    assert json.loads(result["content"]) == {"target_id": 5, "target_name": "Liam", "is_mafia": True}
 
 
 def test_run_match_dispatches_to_requested_runner(monkeypatch: Any) -> None:

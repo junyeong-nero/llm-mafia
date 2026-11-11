@@ -44,7 +44,7 @@ def test_visible_history_for_non_mafia_hides_private_night_events_and_targets() 
     assert night_results[0].content == "Night result: Alex was eliminated."
 
 
-def test_visible_history_for_mafia_keeps_private_events() -> None:
+def test_visible_history_for_mafia_keeps_mafia_events_but_hides_legacy_special_targets() -> None:
     mafia = Player(id=7, name="Ethan", model_name="m", model_id="m", role=Role.MAFIA, alive=True)
     events = [
         GameEvent(turn=1, phase=Phase.NIGHT, speaker="Ethan", kind="mafia_chat", content="private mafia chat"),
@@ -66,4 +66,25 @@ def test_visible_history_for_mafia_keeps_private_events() -> None:
 
     visible = _visible_history_for_player(events, mafia)
 
-    assert visible == events
+    assert visible[:2] == events[:2]
+    assert visible[2].content == "Night result: Alex was eliminated."
+
+
+def test_other_players_cannot_read_internal_strategies_or_request_reasons() -> None:
+    events = [
+        GameEvent(turn=1, phase=Phase.DAY, speaker="Emma", kind="strategy", content="private strategy"),
+        GameEvent(turn=1, phase=Phase.DAY, speaker="Emma", kind="speak_request_reason", content="private reason"),
+        GameEvent(turn=1, phase=Phase.DAY, speaker="Emma", kind="speech", content="public statement"),
+    ]
+    for role in Role:
+        other = Player(id=1, name="Alex", model_name="m", model_id="m", role=role)
+        assert _visible_history_for_player(events, other) == [events[2]]
+    owner = Player(id=2, name="Emma", model_name="m", model_id="m", role=Role.POLICE)
+    assert _visible_history_for_player(events, owner) == events
+
+
+def test_unscoped_investigation_results_fail_closed() -> None:
+    event = GameEvent(turn=1, phase=Phase.NIGHT, speaker="system", kind="investigation_result", content="secret")
+    for role in Role:
+        player = Player(id=1, name="Alex", model_name="m", model_id="m", role=role)
+        assert _visible_history_for_player([event], player) == []
